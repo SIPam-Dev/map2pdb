@@ -63,6 +63,8 @@ type
     function FindByName(const AName: string): TDebugInfoSegmentClass;
 
     property SegmentClass[AClassType: TDebugInfoSegmentClassType]: TDebugInfoSegmentClass read GetSegment; default;
+
+    // TODO : Implement GetEnumerator
   end;
 
 type
@@ -102,6 +104,7 @@ type
     property Module: TDebugInfoModule read FModule write FModule;
     property SourceFile: TDebugInfoSourceFile read FSourceFile write FSourceFile;
     property LineNumber: integer read FLineNumber write FLineNumber;
+    // Offset is relative to module
     property Offset: TDebugInfoOffset read FOffset write FOffset;
   end;
 
@@ -133,6 +136,7 @@ type
 
     property Module: TDebugInfoModule read FModule write FModule;
     property Name: string read FName write FName;
+    // Offset is relative to module
     property Offset: TDebugInfoOffset read FOffset;
     property Size: TDebugInfoOffset read FSize write FSize;
   end;
@@ -170,6 +174,7 @@ type
 
     property Name: string read FName;
     property SegmentClass: TDebugInfoSegmentClass read FSegmentClass;
+    // Offset is relative to segment
     property Offset: TDebugInfoOffset read FOffset;
     property Size: TDebugInfoOffset read FSize;
 

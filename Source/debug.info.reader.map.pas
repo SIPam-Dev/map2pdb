@@ -163,6 +163,8 @@ end;
 
 function TDebugInfoMapReader.Demangle(Module: TDebugInfoModule; const Name: string): string;
 begin
+  // More a beautyfier than a demangler since the MAP symbols aren't really mangled
+
   var n := 1;
 
   // Strip module name from symbol name
@@ -188,6 +190,36 @@ begin
     Result := Copy(Name, n, MaxInt)
   else
     Result := Name;
+
+  // Remove type unit scopes
+  //   TList<System.Generics.Collections.TPair<System.TypInfo.PTypeInfo,System.string>>.GetList
+  //   TList<TPair<PTypeInfo,string>>.GetList
+  n := Pos('<', Result);
+  while (n < Result.Length) and (n <> 0) do
+  begin
+
+    // Find next '<' or ','
+    while (n <= Result.Length) and (Result[n] <> '<') and (Result[n] <> ',') do
+      Inc(n);
+    Inc(n); // Skip it
+
+    if (n > Result.Length) then
+      break;
+
+    // Find last '.'
+    var n2 := n;
+    var LastDot := -1;
+    while (Ord(Result[n2]) <= 255) and (AnsiChar(Result[n2]) in ['a'..'z', 'A'..'Z', '.']) do
+    begin
+      if (Result[n2] = '.') then
+        LastDot := n2;
+      inc(n2);
+    end;
+    if (LastDot <> -1) then
+      Delete(Result, n, LastDot-n+1);
+
+    inc(n);
+  end;
 end;
 
 procedure TDebugInfoMapReader.LoadFromFile(const Filename: string; DebugInfo: TDebugInfo);
@@ -281,8 +313,10 @@ begin
         raise Exception.CreateFmt('[%d] Invalid module name (%s)', [Reader.LineNumber, Reader.LineBuffer]);
 
       var Segment: TDebugInfoSegment := HexToInt16(Address, 0);
+
       n := Pos(':', Address);
       var Offset: TDebugInfoOffset := HexToInt32(Address, n);
+
       n := Pos(' ', Address);
       var Size: TDebugInfoOffset := HexToInt32(Address, n);
       if (Size = 0) then
@@ -296,10 +330,12 @@ begin
       var Module := DebugInfo.Modules.FindByOffset(SegmentClass, Offset);
       if (Module <> nil) then
         raise Exception.CreateFmt('[%d] Module offset collision (%s)', [Reader.LineNumber, Reader.LineBuffer]);
+
       Module := DebugInfo.Modules.FindByOffset(SegmentClass, Offset+Size-1);
       if (Module <> nil) then
         raise Exception.CreateFmt('[%d] Modules overlap: %s, %s (%s)', [Reader.LineNumber, Module.Name, Name, Reader.LineBuffer]);
 
+      // Add new module
       DebugInfo.Modules.Add(Name, SegmentClass, Offset, Size);
 
       Reader.NextLine;
@@ -318,7 +354,6 @@ begin
     if (Reader.NextLine(True).IsEmpty) then
       Exit;
 
-    var xxx := 0;
     // " 0001:000E99AC       debug.info..TDebugInfo"
     while (not Reader.CurrentLine.IsEmpty) do
     begin
@@ -330,6 +365,7 @@ begin
         raise Exception.CreateFmt('[%d] Invalid symbol name (%s)', [Reader.LineNumber, Reader.LineBuffer]);
 
       var Segment: TDebugInfoSegment := HexToInt16(Address, 0);
+
       n := Pos(':', Address);
       var Offset: TDebugInfoOffset := HexToInt32(Address, n);
 
@@ -351,15 +387,16 @@ begin
 
           var Symbol := Module.Symbols.Add(Name, Offset);
           if (Symbol = nil) then
-            WriteLn(Format('[%d] Symbol with duplicate offset ignored: %s @ %.8X (%s)', [Reader.LineNumber, Name, Offset, Reader.LineBuffer]));
+            WriteLn(Format('[%d] Symbol with duplicate offset ignored: %.4X:%.8X %s', [Reader.LineNumber, Segment, Offset, Name]));
         end;
 
       end else
-        WriteLn(Format('[%d] Failed to resolve symbol to module: %s (%s)', [Reader.LineNumber, Name, Reader.LineBuffer]));
+        WriteLn(Format('[%d] Failed to resolve symbol to module: %.4X:%.8X %s', [Reader.LineNumber, Segment, Offset, Name]));
 
       Reader.NextLine;
     end;
 
+    // Once all symbols has been loaded we can calculate their size
     for var Module in DebugInfo.Modules do
     begin
       Module.Symbols.CalculateSizes;
@@ -466,8 +503,12 @@ begin
 
                 Module.SourceLines.Add(SourceFile, LineNumber, Offset);
               end else
+              begin
                 // This is typically the last "end." of the unit. The offset corresponds to the start of the next module.
-                WriteLn(Format('[%d] Line number offset out of range for module: Offset=%.8X, Module=%s (%s)', [Reader.LineNumber, Offset, Module.Name, Reader.LineBuffer]));
+
+                // We can get *a lot* of these so I've disabled output of them for now
+                // WriteLn(Format('[%d] Line number offset out of range for module: Offset=%.8X, Module=%s', [Reader.LineNumber, Offset, Module.Name]));
+              end;
             end;
 
             while (n <= Reader.LineBuffer.Length) and (Reader.LineBuffer[n] = ' ') do

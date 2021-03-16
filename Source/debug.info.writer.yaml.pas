@@ -93,7 +93,9 @@ begin
     *)
     BeginBlock('PdbStream:');
     begin
-      // llvm-pdbutil swaps the values in the GUID that have endianess...
+      // llvm-pdbutil swaps the values in the GUID that have endianess
+      // (this is a bug) so we need to save them "pre-swapped" in the
+      // YAML file in order to get the correct value in the PDB file.
       var TweakedSignature := Signature;
       var Bytes := TweakedSignature.ToByteArray(TEndian.Little);
       TweakedSignature := TGUID.Create(Bytes, TEndian.Big);
@@ -165,7 +167,7 @@ begin
               BeginBlock('- !Lines');
               begin
                 WriteLine('CodeSize: %d', [Module.Size]);
-                WriteLine('RelocOffset: %d', [Module.Offset]);
+                WriteLine('RelocOffset: %0:d # %0:.8X', [Module.Offset]);
                 WriteLine('RelocSegment: %d', [Module.SegmentClass.Value]);
                 WriteLine('Flags: [ ]');
                 BeginBlock('Blocks:');
@@ -229,32 +231,19 @@ begin
                   begin
                     BeginBlock('ProcSym:');
                     begin
+                      WriteLine('Segment: %d', [Symbol.Module.SegmentClass.Value]);
+                      WriteLine('Offset: %0:d # %0:.8X [%1:.8X]', [Symbol.Offset, Symbol.Module.SegmentClass.Offset+Symbol.Module.Offset+Symbol.Offset]);
                       WriteLine('CodeSize: %d', [Symbol.Size]);
                       WriteLine('DbgStart: 0');
                       WriteLine('DbgEnd: %d', [Symbol.Size-1]);
                       WriteLine('FunctionType: 4097'); // I have no clue...
-                      WriteLine('Offset: %d', [Symbol.Offset]);
-                      WriteLine('Segment: %d', [Symbol.Module.SegmentClass.Value]);
                       WriteLine('Flags: [ ]');
                       WriteLine('DisplayName: ''%s''', [Symbol.Name]);
                     end;
                     EndBlock;
                   end;
                   EndBlock;
-(*
-                  BeginBlock('- Kind: S_PUB32');
-                  begin
-                    BeginBlock('PublicSym32:');
-                    begin
-                      WriteLine('Flags: [Function ]');
-                      WriteLine('Offset: %d', [Symbol.Offset]);
-                      WriteLine('Segment: %d', [Symbol.Module.SegmentClass.Value]);
-                      WriteLine('Name: ''%s''', [Symbol.Name]);
-                    end;
-                    EndBlock;
-                  end;
-                  EndBlock;
-*)
+
                   (* As far as I can see a S_GPROC32 must be terminated with S_END but it doesn't seem to make a difference.
                   BeginBlock('- Kind: S_END');
                   begin
@@ -273,6 +262,93 @@ begin
           end;
           EndBlock;
         end;
+
+        (*
+        ** Output segments as a special linker module
+        *)
+        // See: https://reviews.llvm.org/rG28e31ee45e63d7c195e7980c811a15f0b26118cb
+        BeginBlock('- Module: ''%s''', ['* Linker *']);
+        begin
+          WriteLine('ObjFile: ''''');
+
+          BeginBlock('Modi:');
+          begin
+            WriteLine('Signature: 4');
+
+            BeginBlock('Records:');
+            begin
+              BeginBlock('- Kind: S_OBJNAME');
+              begin
+                BeginBlock('ObjNameSym:');
+                begin
+                  WriteLine('Signature: 0');
+                  WriteLine('ObjectName: ''* Linker *''');
+                end;
+                EndBlock;
+              end;
+              EndBlock;
+
+              BeginBlock('- Kind: S_COMPILE3');
+              begin
+                BeginBlock('Compile3Sym:');
+                begin
+                  WriteLine('Machine: X64');
+                  WriteLine('Version: ''Microsoft (R) LINK''');
+                  WriteLine('Flags: [ ]');
+                  WriteLine('FrontendMajor: 0');
+                  WriteLine('FrontendMinor: 0');
+                  WriteLine('FrontendBuild: 0');
+                  WriteLine('FrontendQFE: 0');
+                  WriteLine('BackendMajor: 12');
+                  WriteLine('BackendMinor: 0');
+                  WriteLine('BackendBuild: 31101');
+                  WriteLine('BackendQFE: 0');
+                end;
+                EndBlock;
+              end;
+              EndBlock;
+
+              for var SegClassType := Low(TDebugInfoSegmentClassType) to High(TDebugInfoSegmentClassType) do
+              begin
+                var SegmentClass := DebugInfo.SegmentClasses[SegClassType];
+                if (SegmentClass = nil) then
+                  continue;
+
+                BeginBlock('- Kind: S_SECTION');
+                begin
+                  BeginBlock('SectionSym:');
+                  begin
+                    WriteLine('SectionNumber: %d', [SegmentClass.Value]);
+                    WriteLine('Rva: %d', [$1000*SegmentClass.Value]); // Naturally the RVA isn't available so I'm just using "some value" and hoping for the best...
+                    WriteLine('Alignment: %d', [12]); // Apparently value is power of 2. Eg. 2^12 = 4096
+                    WriteLine('Length: %d', [SegmentClass.Size]);
+                    WriteLine('Characteristics: %d', [$60000020]); // TODO
+                    WriteLine('Name: %s', [SegmentClass.Name]);
+                  end;
+                  EndBlock;
+                end;
+                EndBlock;
+
+                BeginBlock('- Kind: S_COFFGROUP');
+                begin
+                  BeginBlock('CoffGroupSym:');
+                  begin
+                    WriteLine('Segment: %d', [SegmentClass.Value]);
+                    WriteLine('Offset: %d', [SegmentClass.Offset]);
+                    WriteLine('Size: %d', [SegmentClass.Size]);
+                    WriteLine('Name: %s', [SegmentClass.Name]);
+                    WriteLine('Characteristics: %d', [$60000020]); // TODO
+                  end;
+                  EndBlock;
+                end;
+                EndBlock;
+              end;
+            end;
+            EndBlock;
+          end;
+          EndBlock;
+        end;
+        EndBlock;
 
       end;
       EndBlock;
