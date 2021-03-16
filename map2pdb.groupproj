@@ -1,0 +1,48 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{BA9D2F58-1BD3-4B46-850D-A15D7FCCF35C}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="Source\map2yaml.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="Source\bindpdb.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="map2yaml">
+        <MSBuild Projects="Source\map2yaml.dproj"/>
+    </Target>
+    <Target Name="map2yaml:Clean">
+        <MSBuild Projects="Source\map2yaml.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="map2yaml:Make">
+        <MSBuild Projects="Source\map2yaml.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="bindpdb">
+        <MSBuild Projects="Source\bindpdb.dproj"/>
+    </Target>
+    <Target Name="bindpdb:Clean">
+        <MSBuild Projects="Source\bindpdb.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="bindpdb:Make">
+        <MSBuild Projects="Source\bindpdb.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="map2yaml;bindpdb"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="map2yaml:Clean;bindpdb:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="map2yaml:Make;bindpdb:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
