@@ -16,11 +16,20 @@ uses
 
 type
   TDebugInfoMapReader = class
+  private
+    FLogging: boolean;
   protected
+    procedure Log(const Msg: string);
+    procedure Warning(const Msg: string); overload;
+    procedure Warning(const Fmt: string; const Args: array of const); overload;
+    procedure Warning(LineNumber: integer; const Msg: string); overload;
+    procedure Warning(LineNumber: integer; const Fmt: string; const Args: array of const); overload;
     function Demangle(Module: TDebugInfoModule; const Name: string): string;
   public
     procedure LoadFromStream(Stream: TStream; DebugInfo: TDebugInfo);
     procedure LoadFromFile(const Filename: string; DebugInfo: TDebugInfo);
+
+    property Logging: boolean read FLogging write FLogging;
   end;
 
 implementation
@@ -161,6 +170,32 @@ end;
 
 { TDebugInfoMapReader }
 
+procedure TDebugInfoMapReader.Log(const Msg: string);
+begin
+  if (FLogging) then
+    WriteLn(Msg);
+end;
+
+procedure TDebugInfoMapReader.Warning(const Msg: string);
+begin
+  WriteLn(Msg);
+end;
+
+procedure TDebugInfoMapReader.Warning(const Fmt: string; const Args: array of const);
+begin
+  Warning(Format(Fmt, Args));
+end;
+
+procedure TDebugInfoMapReader.Warning(LineNumber: integer; const Msg: string);
+begin
+  Warning('[%5d] %s', [LineNumber, Msg]);
+end;
+
+procedure TDebugInfoMapReader.Warning(LineNumber: integer; const Fmt: string; const Args: array of const);
+begin
+  Warning(LineNumber, Format(Fmt, Args));
+end;
+
 function TDebugInfoMapReader.Demangle(Module: TDebugInfoModule; const Name: string): string;
 begin
   // More a beautyfier than a demangler since the MAP symbols aren't really mangled
@@ -243,6 +278,7 @@ begin
     ** Segments
     *)
 
+    Log('< Segments...');
     // " Start         Length     Name                   Class"
     while (Reader.HasData) and (not Reader.CurrentLine(True).StartsWith('Start')) and (not Reader.LineBuffer.EndsWith('Class')) do
       Reader.NextLine(True);
@@ -293,6 +329,7 @@ begin
     ** Modules
     *)
 
+    Log('< Modules...');
     // "Detailed map of segments"
     while (Reader.HasData) and (Reader.CurrentLine(True) <> 'Detailed map of segments') do
       Reader.NextLine(True);
@@ -346,6 +383,7 @@ begin
     ** Symbols - sorted by name
     *)
 
+    Log('< Symbols...');
     // "  Address             Publics by Name"
     while (Reader.HasData) and (not Reader.CurrentLine(True).EndsWith('Publics by Name')) do
       Reader.NextLine(True);
@@ -387,11 +425,11 @@ begin
 
           var Symbol := Module.Symbols.Add(Name, Offset);
           if (Symbol = nil) then
-            WriteLn(Format('[%d] Symbol with duplicate offset ignored: %.4X:%.8X %s', [Reader.LineNumber, Segment, Offset, Name]));
+            Warning(Reader.LineNumber, 'Symbol with duplicate offset ignored: %.4X:%.8X %s', [Segment, Offset, Name]);
         end;
 
       end else
-        WriteLn(Format('[%d] Failed to resolve symbol to module: %.4X:%.8X %s', [Reader.LineNumber, Segment, Offset, Name]));
+        Warning(Reader.LineNumber, 'Failed to resolve symbol to module: %.4X:%.8X %s', [Segment, Offset, Name]);
 
       Reader.NextLine;
     end;
@@ -403,7 +441,7 @@ begin
 
       for var Symbol in Module.Symbols do
         if (Symbol.Size = 0) then
-          WriteLn(Format('Zero size symbol will be ignored: %s.%s', [Module.Name, Symbol.Name]));
+          Warning('Zero size symbol will be ignored: %s.%s', [Module.Name, Symbol.Name]);
     end;
 
 
@@ -421,6 +459,7 @@ begin
     ** Line numbers - grouped by module & segment
     *)
 
+    Log('< Line numbers...');
     // Rest of file is:
     // "Line numbers for System(WindowsAPIs.INC) segment .text"
     while (Reader.HasData) do
@@ -507,7 +546,7 @@ begin
                 // This is typically the last "end." of the unit. The offset corresponds to the start of the next module.
 
                 // We can get *a lot* of these so I've disabled output of them for now
-                // WriteLn(Format('[%d] Line number offset out of range for module: Offset=%.8X, Module=%s', [Reader.LineNumber, Offset, Module.Name]));
+                // Warning(Reader.LineNumber, '[%d] Line number offset out of range for module: Offset=%.8X, Module=%s', [Offset, Module.Name]);
               end;
             end;
 

@@ -10,6 +10,7 @@ unit debug.info.writer.yaml;
 
 {$define WRITE_LINES}
 {$define WRITE_SYMBOLS}
+{.$define WRITE_PUBLICS} // Doesn't work and llvm-pdbutil doesn't support it properly
 
 interface
 
@@ -19,18 +20,31 @@ uses
 
 type
   TDebugInfoYamlWriter = class
+  private
+    FLogging: boolean;
+  protected
+    procedure Log(const Msg: string);
   public
     procedure SaveToStream(Stream: TStream; DebugInfo: TDebugInfo);
     procedure SaveToFile(const Filename: string; DebugInfo: TDebugInfo);
+
+    property Logging: boolean read FLogging write FLogging;
   end;
 
 implementation
 
 uses
   SysUtils,
-  Types;
+  Types,
+  debug.info.pdb;
 
 { TDebugInfoYamlWriter }
+
+procedure TDebugInfoYamlWriter.Log(const Msg: string);
+begin
+  if (FLogging) then
+    WriteLn(Msg);
+end;
 
 procedure TDebugInfoYamlWriter.SaveToFile(const Filename: string; DebugInfo: TDebugInfo);
 begin
@@ -77,8 +91,6 @@ var
     Dec(Level);
   end;
 
-const
-  Signature: TGUID = '{CBB17264-89FA-4AED-A2D7-814EE276EF3E}';
 begin
   Writer := TStreamWriter.Create(Stream);
   try
@@ -96,11 +108,11 @@ begin
       // llvm-pdbutil swaps the values in the GUID that have endianess
       // (this is a bug) so we need to save them "pre-swapped" in the
       // YAML file in order to get the correct value in the PDB file.
-      var TweakedSignature := Signature;
+      var TweakedSignature := PdbBuildSignature;
       var Bytes := TweakedSignature.ToByteArray(TEndian.Little);
       TweakedSignature := TGUID.Create(Bytes, TEndian.Big);
 
-      WriteLine('Age: 1');
+      WriteLine('Age: %d', [PdbBuildAge]);
       WriteLine('Guid: ''%s''', [TweakedSignature.ToString]);
       WriteLine('Signature: 1537453107'); // Value doesn't matter
       WriteLine('Features: [ MinimalDebugInfo ]');
@@ -116,7 +128,7 @@ begin
     BeginBlock('DbiStream:');
     begin
       WriteLine('VerHeader: V70');
-      WriteLine('Age: 1');
+      WriteLine('Age: %d', [PdbBuildAge]);
 //      WriteLine('MachineType: Amd64');
       WriteLine('Flags: 0'); // 2 = private symbols were stripped
 
@@ -133,8 +145,12 @@ begin
           if (not (Module.SegmentClass.SegClassType in [sctCODE, sctICODE])) then
             continue;
 
+          Log(Format('> Module: %s', [Module.Name]));
+
           BeginBlock('- Module: ''%s''', [Module.Name]);
           begin
+            WriteLine('ObjFile: ''%s.dcu''', [Module.Name]);
+
             BeginBlock('SourceFiles:');
             begin
               for var SourceFile in Module.SourceFiles do
@@ -319,7 +335,7 @@ begin
                   BeginBlock('SectionSym:');
                   begin
                     WriteLine('SectionNumber: %d', [SegmentClass.Value]);
-                    WriteLine('Rva: %d', [$1000*SegmentClass.Value]); // Naturally the RVA isn't available so I'm just using "some value" and hoping for the best...
+                    WriteLine('Rva: %d', [SegmentClass.Offset]);
                     WriteLine('Alignment: %d', [12]); // Apparently value is power of 2. Eg. 2^12 = 4096
                     WriteLine('Length: %d', [SegmentClass.Size]);
                     WriteLine('Characteristics: %d', [$60000020]); // TODO
@@ -334,7 +350,7 @@ begin
                   BeginBlock('CoffGroupSym:');
                   begin
                     WriteLine('Segment: %d', [SegmentClass.Value]);
-                    WriteLine('Offset: %d', [SegmentClass.Offset]);
+                    WriteLine('Offset: %d', [0]); // Apparently relative to the segment
                     WriteLine('Size: %d', [SegmentClass.Size]);
                     WriteLine('Name: %s', [SegmentClass.Name]);
                     WriteLine('Characteristics: %d', [$60000020]); // TODO
@@ -354,6 +370,60 @@ begin
       EndBlock;
     end;
     EndBlock;
+
+    (*
+    ** Public stream
+    **
+    ** According to the LLVM documentation the Public Stream is part of the DBI stream
+    ** but llvm-pdbutil pdb2yaml places the PublicsStream section at the outer level, same
+    ** as the DBI stream.
+    ** Furthermore llvm-pdbutil yaml2pdb requires the same format but the pdb it produces
+    ** apparently doesn't contain the Publics Stream, so it doesn't round-trip.
+    *)
+{$ifdef WRITE_PUBLICS}
+    BeginBlock('PublicsStream:');
+    begin
+      BeginBlock('Records:');
+      begin
+        for var Module in DebugInfo.Modules do
+        begin
+          // Skip module if it doesn't contain any usable source lines
+          if (Module.SourceLines.Empty) then
+            continue;
+
+          // Skip module if it doesn't contain code
+          if (not (Module.SegmentClass.SegClassType in [sctCODE, sctICODE])) then
+            continue;
+
+          for var Symbol in Module.Symbols do
+          begin
+            // Ignore zero size symbols
+            if (Symbol.Size = 0) then
+              continue;
+
+            BeginBlock('- Kind: S_PUB32');
+            begin
+              BeginBlock('PublicSym32:');
+              begin
+                WriteLine('Flags: [ Function ]');
+//                var Offset := Symbol.Module.SegmentClass.Offset+Symbol.Module.Offset+Symbol.Offset;
+                var Offset := Symbol.Module.Offset+Symbol.Offset;
+                WriteLine('Offset: %0:d # %0:.8X [%1:.8X]', [Offset, Symbol.Offset]);
+                WriteLine('Segment: %d', [Symbol.Module.SegmentClass.Value]);
+                WriteLine('Name: ''%s''', [Symbol.Name]);
+              end;
+              EndBlock;
+            end;
+            EndBlock;
+
+          end;
+        end;
+
+      end;
+      EndBlock;
+    end;
+    EndBlock;
+{$endif WRITE_PUBLICS}
 
     WriteLine('...');
 

@@ -16,7 +16,8 @@ uses
   System.SysUtils,
   Classes,
   Windows,
-  IOUtils;
+  IOUtils,
+  debug.info.pdb;
 
 type
   CV_INFO_PDB70 = record
@@ -27,9 +28,6 @@ type
   end;
   TCodeViewInfoPDB70 = CV_INFO_PDB70;
   PCodeViewInfoPDB70 = ^TCodeViewInfoPDB70;
-
-const
-  Signature: TGUID = '{CBB17264-89FA-4AED-A2D7-814EE276EF3E}';
 
 procedure PatchFile(const Filename, PdbFilename: string);
 begin
@@ -122,8 +120,8 @@ begin
     try
 
       CodeViewInfoPDB.CvSignature := $53445352; // RSDS
-      CodeViewInfoPDB.Signature := Signature; // GUID - must be the same as the one in the PDB
-      CodeViewInfoPDB.Age := 1; // Generation counter - must be same value as the one in the PDB
+      CodeViewInfoPDB.Signature := PdbBuildSignature; // GUID - must be the same as the one in the PDB
+      CodeViewInfoPDB.Age := PdbBuildAge; // Generation counter - must be same value as the one in the PDB
       Move(Bytes[0], CodeViewInfoPDB.PdbFileName, Length(Bytes));
       CodeViewInfoPDB.PdbFileName[Length(Bytes)] := 0;
 
@@ -155,15 +153,28 @@ begin
   end;
 end;
 
+procedure DisplayBanner;
+begin
+  Writeln('bindpdb - Copyright (c) 2021 Anders Melander');
+  Writeln('Version 1.0');
+  Writeln;
+end;
+
+procedure DisplayHelp;
+begin
+  Writeln('Patches a Delphi compiled exe file to include a reference to a pdb file.');
+  Writeln;
+  Writeln('Usage: bindpdb <exe-filename> [<pdb-filename>]');
+  Writeln;
+end;
+
 begin
   try
     Writeln('bindpdb - Copyright (c) 2021 Anders Melander');
 
-    if (ParamCount < 1) then
+    if (ParamCount < 1) or (FindCmdLineSwitch('h')) or (FindCmdLineSwitch('?')) then
     begin
-      Writeln('Patches a Delphi compiled exe file to include a reference to a pdb file.');
-      Writeln;
-      Writeln('Usage: bindpdb <exe-filename> [<pdb-filename>]');
+      DisplayHelp;
       Exit;
     end;
 
@@ -177,7 +188,10 @@ begin
 
   except
     on E: Exception do
+    begin
       Writeln(E.ClassName, ': ', E.Message);
+      Halt(1);
+    end;
   end;
 end.
 
