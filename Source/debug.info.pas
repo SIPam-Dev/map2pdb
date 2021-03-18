@@ -147,7 +147,6 @@ type
   private
     FModule: TDebugInfoModule;
     FSymbols: TDebugInfoSymbolList;
-    FSymbolNames: TDictionary<string, TDebugInfoSymbol>;
   public
     constructor Create(AModule: TDebugInfoModule);
     destructor Destroy; override;
@@ -283,13 +282,11 @@ begin
 
   FModule := AModule;
   FSymbols := TDebugInfoSymbolList.Create(True);
-  FSymbolNames := TDictionary<string, TDebugInfoSymbol>.Create;
 end;
 
 destructor TDebugInfoSymbols.Destroy;
 begin
   FSymbols.Free;
-  FSymbolNames.Free;
 
   inherited;
 end;
@@ -301,14 +298,6 @@ end;
 
 function TDebugInfoSymbols.Add(const AName: string; AOffset: TDebugInfoOffset): TDebugInfoSymbol;
 begin
-  if (FSymbolNames.TryGetValue(AName, Result)) then
-  begin
-    if (AOffset <> Result.Offset) then
-      raise Exception.CreateFmt('Duplicate symbol with different offsets: %s, %.8X %.8X', [AName, AOffset, Result.Offset]);
-
-    Exit(Result);
-  end;
-
   Result := TDebugInfoSymbol.Create(FModule, AName, AOffset);
 
   var Index: integer;
@@ -318,8 +307,14 @@ begin
       Result := Left.Offset-Right.Offset;
     end))) then
   begin
-    Result.Free;
-    Result := nil;
+    // Return existing if we have an exact duplicate of Name+Offset
+
+    if (Result.Name <> AName) then
+    begin
+      // Disallow duplicate offset but don't fail
+      Result.Free;
+      Result := nil;
+    end;
   end else
     FSymbols.Insert(Index, Result);
 end;
