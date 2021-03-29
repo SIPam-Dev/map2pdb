@@ -1,4 +1,4 @@
-program bindpdb;
+unit debug.info.pdb.bind;
 
 (*
  * Copyright (c) 2021 Anders Melander
@@ -8,29 +8,33 @@ program bindpdb;
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *)
 
-{$APPTYPE CONSOLE}
+interface
 
-{$R *.res}
+procedure PatchPE(const Filename, PdbFilename: string; Logging: boolean = False);
+
+implementation
 
 uses
+  System.Classes,
   System.SysUtils,
-  Classes,
-  Windows,
-  IOUtils,
+  WinApi.Windows,
+  debug.info.codeview,
   debug.info.pdb;
 
-type
-  CV_INFO_PDB70 = record
-    CvSignature: DWORD;
-    Signature: TGUID;
-    Age: DWORD;
-    PdbFileName: array[0..0] of BYTE;
-  end;
-  TCodeViewInfoPDB70 = CV_INFO_PDB70;
-  PCodeViewInfoPDB70 = ^TCodeViewInfoPDB70;
+procedure PatchPE(const Filename, PdbFilename: string; Logging: boolean = False);
 
-procedure PatchFile(const Filename, PdbFilename: string);
+  procedure Log(const Msg: string);
+  begin
+    Writeln(Msg);
+  end;
+
+type
+  TByteArray = array[0..MaxInt-1] of Byte;
+  PByteArray = ^TByteArray;
 begin
+  if (Logging) then
+    Log('Patching PE file');
+
   var Stream := TFileStream.Create(Filename, fmOpenReadWrite or fmShareExclusive);
   try
     (*
@@ -111,7 +115,8 @@ begin
       // Write updated debug directory
       Stream.Seek(DebugOffset, soBeginning);
       Stream.WriteBuffer(DebugDirectory, SizeOf(DebugDirectory));
-      Writeln('- Type of debug directory entry has been set to IMAGE_DEBUG_TYPE_CODEVIEW.');
+      if (Logging) then
+        Log('- Type of debug directory entry has been set to IMAGE_DEBUG_TYPE_CODEVIEW.');
     end;
 
     // Populate and write a CV_INFO_PDB70 block
@@ -123,12 +128,13 @@ begin
       CodeViewInfoPDB.Signature := PdbBuildSignature; // GUID - must be the same as the one in the PDB
       CodeViewInfoPDB.Age := PdbBuildAge; // Generation counter - must be same value as the one in the PDB
       Move(Bytes[0], CodeViewInfoPDB.PdbFileName, Length(Bytes));
-      CodeViewInfoPDB.PdbFileName[Length(Bytes)] := 0;
+      PByteArray(@CodeViewInfoPDB^.PdbFileName)^[Length(Bytes)] := 0;
 
       // Write updated debug data
       Stream.Seek(DebugDirectory.PointerToRawData, soBeginning);
       Stream.WriteBuffer(CodeViewInfoPDB^, DebugSize);
-      Writeln('- PDB file name has been stored in debug data.');
+      if (Logging) then
+        Log('- PDB file name has been stored in debug data.');
 
     finally
       FreeMem(CodeViewInfoPDB);
@@ -137,61 +143,24 @@ begin
     if (NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size < SizeOf(TImageDebugDirectory)) then
     begin
       NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size := SizeOf(TImageDebugDirectory);
-      Writeln('- Debug directory size has been reset to correct value.');
+      if (Logging) then
+        Log('- Debug directory size has been reset to correct value.');
     end;
 
     // Clear the checksum so file doesn't appear corrupt
     NtHeaders32.OptionalHeader.CheckSum := 0;
-    Writeln('- Header checksum has been cleared.');
+    if (Logging) then
+        Log('- Header checksum has been cleared.');
 
     // Write updated NT header
     Stream.Seek(DosHeader._lfanew, soBeginning);
     Stream.WriteBuffer(NtHeaders32, SizeOf(NtHeaders32));
-    Writeln('- File has been updated.');
+    if (Logging) then
+        Log('- PE file has been updated.');
   finally
     Stream.Free;
   end;
 end;
 
-procedure DisplayBanner;
-begin
-  Writeln('bindpdb - Copyright (c) 2021 Anders Melander');
-  Writeln('Version 1.0');
-  Writeln;
-end;
-
-procedure DisplayHelp;
-begin
-  Writeln('Patches a Delphi compiled exe file to include a reference to a pdb file.');
-  Writeln;
-  Writeln('Usage: bindpdb <exe-filename> [<pdb-filename>]');
-  Writeln;
-end;
-
-begin
-  try
-    Writeln('bindpdb - Copyright (c) 2021 Anders Melander');
-
-    if (ParamCount < 1) or (FindCmdLineSwitch('h')) or (FindCmdLineSwitch('?')) then
-    begin
-      DisplayHelp;
-      Exit;
-    end;
-
-    var Filename := ParamStr(1);
-    var PdbFilename := ParamStr(2);
-
-    if (PdbFilename = '') then
-      PdbFilename := TPath.ChangeExtension(TPath.GetFileName(Filename), '.pdb');
-
-    PatchFile(Filename, PdbFilename);
-
-  except
-    on E: Exception do
-    begin
-      Writeln(E.ClassName, ': ', E.Message);
-      Halt(1);
-    end;
-  end;
 end.
 

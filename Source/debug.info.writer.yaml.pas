@@ -16,22 +16,21 @@ interface
 
 uses
   Classes,
-  debug.info;
+  debug.info,
+  debug.info.writer;
 
 type
-  TDebugInfoYamlWriter = class
+  // YAML writer for use with the LLVM project's llvm-pdbutil yaml2pdb
+  TDebugInfoYamlWriter = class(TDebugInfoWriter)
   private
-    FLogging: boolean;
   protected
-    procedure Log(const Msg: string);
   public
-    procedure SaveToStream(Stream: TStream; DebugInfo: TDebugInfo);
-    procedure SaveToFile(const Filename: string; DebugInfo: TDebugInfo);
-
-    property Logging: boolean read FLogging write FLogging;
+    procedure SaveToStream(Stream: TStream; DebugInfo: TDebugInfo); override;
   end;
 
+
 implementation
+
 
 uses
   SysUtils,
@@ -39,24 +38,6 @@ uses
   debug.info.pdb;
 
 { TDebugInfoYamlWriter }
-
-procedure TDebugInfoYamlWriter.Log(const Msg: string);
-begin
-  if (FLogging) then
-    WriteLn(Msg);
-end;
-
-procedure TDebugInfoYamlWriter.SaveToFile(const Filename: string; DebugInfo: TDebugInfo);
-begin
-  var Stream := TFileStream.Create(Filename, fmCreate);
-  try
-
-    SaveToStream(Stream, DebugInfo);
-
-  finally
-    Stream.Free;
-  end;
-end;
 
 procedure TDebugInfoYamlWriter.SaveToStream(Stream: TStream; DebugInfo: TDebugInfo);
 var
@@ -92,6 +73,9 @@ var
   end;
 
 begin
+  if (Logging) then
+    Log('Writing YAML file');
+
   Writer := TStreamWriter.Create(Stream);
   try
 
@@ -142,10 +126,10 @@ begin
             continue;
 
           // Skip module if it doesn't contain code
-          if (not (Module.SegmentClass.SegClassType in [sctCODE, sctICODE])) then
+          if (not (Module.Segment.SegClassType in [sctCODE, sctICODE])) then
             continue;
 
-          Log(Format('> Module: %s', [Module.Name]));
+          Log(Format('- Module: %s', [Module.Name]));
 
           BeginBlock('- Module: ''%s''', [Module.Name]);
           begin
@@ -184,7 +168,7 @@ begin
               begin
                 WriteLine('CodeSize: %d', [Module.Size]);
                 WriteLine('RelocOffset: %0:d # %0:.8X', [Module.Offset]);
-                WriteLine('RelocSegment: %d', [Module.SegmentClass.Value]);
+                WriteLine('RelocSegment: %d', [Module.Segment.Index]);
                 WriteLine('Flags: [ ]');
                 BeginBlock('Blocks:');
                 begin
@@ -247,8 +231,8 @@ begin
                   begin
                     BeginBlock('ProcSym:');
                     begin
-                      WriteLine('Segment: %d', [Symbol.Module.SegmentClass.Value]);
-                      WriteLine('Offset: %0:d # %0:.8X [%1:.8X]', [Symbol.Offset, Symbol.Module.SegmentClass.Offset+Symbol.Module.Offset+Symbol.Offset]);
+                      WriteLine('Segment: %d', [Symbol.Module.Segment.Index]);
+                      WriteLine('Offset: %0:d # %0:.8X [%1:.8X]', [Symbol.Offset, Symbol.Module.Segment.Offset+Symbol.Module.Offset+Symbol.Offset]);
                       WriteLine('CodeSize: %d', [Symbol.Size]);
                       WriteLine('DbgStart: 0');
                       WriteLine('DbgEnd: %d', [Symbol.Size-1]);
@@ -324,22 +308,22 @@ begin
               end;
               EndBlock;
 
-              for var SegClassType := Low(TDebugInfoSegmentClassType) to High(TDebugInfoSegmentClassType) do
+              for var SegClassType := Low(TDebugInfoSegmentClass) to High(TDebugInfoSegmentClass) do
               begin
-                var SegmentClass := DebugInfo.SegmentClasses[SegClassType];
-                if (SegmentClass = nil) then
+                var Segment := DebugInfo.Segments.FindByClassType(SegClassType);
+                if (Segment = nil) then
                   continue;
 
                 BeginBlock('- Kind: S_SECTION');
                 begin
                   BeginBlock('SectionSym:');
                   begin
-                    WriteLine('SectionNumber: %d', [SegmentClass.Value]);
-                    WriteLine('Rva: %d', [SegmentClass.Offset]);
+                    WriteLine('SectionNumber: %d', [Segment.Index]);
+                    WriteLine('Rva: %d', [Segment.Offset]);
                     WriteLine('Alignment: %d', [12]); // Apparently value is power of 2. Eg. 2^12 = 4096
-                    WriteLine('Length: %d', [SegmentClass.Size]);
+                    WriteLine('Length: %d', [Segment.Size]);
                     WriteLine('Characteristics: %d', [$60000020]); // TODO
-                    WriteLine('Name: %s', [SegmentClass.Name]);
+                    WriteLine('Name: %s', [Segment.Name]);
                   end;
                   EndBlock;
                 end;
@@ -349,10 +333,10 @@ begin
                 begin
                   BeginBlock('CoffGroupSym:');
                   begin
-                    WriteLine('Segment: %d', [SegmentClass.Value]);
+                    WriteLine('Segment: %d', [Segment.Index]);
                     WriteLine('Offset: %d', [0]); // Apparently relative to the segment
-                    WriteLine('Size: %d', [SegmentClass.Size]);
-                    WriteLine('Name: %s', [SegmentClass.Name]);
+                    WriteLine('Size: %d', [Segment.Size]);
+                    WriteLine('Name: %s', [Segment.Name]);
                     WriteLine('Characteristics: %d', [$60000020]); // TODO
                   end;
                   EndBlock;
@@ -381,6 +365,9 @@ begin
     ** apparently doesn't contain the Publics Stream, so it doesn't round-trip.
     *)
 {$ifdef WRITE_PUBLICS}
+    if (Logging) then
+      Log('- Symbols');
+
     BeginBlock('PublicsStream:');
     begin
       BeginBlock('Records:');
@@ -392,7 +379,7 @@ begin
             continue;
 
           // Skip module if it doesn't contain code
-          if (not (Module.SegmentClass.SegClassType in [sctCODE, sctICODE])) then
+          if (not (Module.Segment.SegClassType in [sctCODE, sctICODE])) then
             continue;
 
           for var Symbol in Module.Symbols do
@@ -406,10 +393,10 @@ begin
               BeginBlock('PublicSym32:');
               begin
                 WriteLine('Flags: [ Function ]');
-//                var Offset := Symbol.Module.SegmentClass.Offset+Symbol.Module.Offset+Symbol.Offset;
+//                var Offset := Symbol.Module.Segment.Offset+Symbol.Module.Offset+Symbol.Offset;
                 var Offset := Symbol.Module.Offset+Symbol.Offset;
                 WriteLine('Offset: %0:d # %0:.8X [%1:.8X]', [Offset, Symbol.Offset]);
-                WriteLine('Segment: %d', [Symbol.Module.SegmentClass.Value]);
+                WriteLine('Segment: %d', [Symbol.Module.Segment.Value]);
                 WriteLine('Name: ''%s''', [Symbol.Name]);
               end;
               EndBlock;

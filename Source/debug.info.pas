@@ -11,63 +11,78 @@ unit debug.info;
 interface
 
 uses
-  Generics.Collections;
+  System.Generics.Collections,
+  System.Generics.Defaults;
 
 type
-  TDebugInfoSegment = Word;
   TDebugInfoOffset = Cardinal;
 
 type
-  TDebugInfoSegmentClassType = (sctCODE, sctICODE, sctDATA, sctBSS, sctTLS, sctPDATA);
+  TDebugInfo = class;
+  TDebugInfoModule = class;
 
-  TDebugInfoSegmentClass = class
+
+  TDebugInfoSegmentClass = (sctCODE, sctICODE, sctDATA, sctBSS, sctTLS, sctPDATA);
+
+  TDebugInfoSegments = class;
+
+  TDebugInfoSegment = class
   private const
-    sClassNames: array[TDebugInfoSegmentClassType] of string = ('CODE', 'ICODE', 'DATA', 'BSS', 'TLS', 'PDATA');
+    sClassNames: array[TDebugInfoSegmentClass] of string = ('CODE', 'ICODE', 'DATA', 'BSS', 'TLS', 'PDATA');
   private
-    FSegClassType: TDebugInfoSegmentClassType;
+    FOwner: TDebugInfoSegments;
+    FSegClassType: TDebugInfoSegmentClass;
     FName: string;
     FOffset: TDebugInfoOffset;
     FSize: TDebugInfoOffset;
-    FValue: integer;
+    FIndex: Cardinal;
+    FCharacteristics: Cardinal;
+  private
+    procedure CheckOverlap;
   protected
     function GetSegClassName: string;
+    procedure SetOffset(const Value: TDebugInfoOffset);
+    procedure SetSize(const Value: TDebugInfoOffset);
   public
-    constructor Create(AValue: integer; const AClassName: string); overload;
-    constructor Create(AValue: integer; AClassType: TDebugInfoSegmentClassType); overload;
+    constructor Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; const AClassName: string); overload;
+    constructor Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; AClassType: TDebugInfoSegmentClass); overload;
 
-    class function ClassNameToClassType(const AClassName: string): TDebugInfoSegmentClassType;
+    class function ClassNameToClassType(const AClassName: string): TDebugInfoSegmentClass;
 
-    property Value: integer read FValue;
-    property SegClassType: TDebugInfoSegmentClassType read FSegClassType;
+    property Index: Cardinal read FIndex; // 1 based value
+    property SegClassType: TDebugInfoSegmentClass read FSegClassType;
     property SegClassName: string read GetSegClassName;
     property Name: string read FName write FName;
-    property Offset: TDebugInfoOffset read FOffset write FOffset;
-    property Size: TDebugInfoOffset read FSize write FSize;
+    property Offset: TDebugInfoOffset read FOffset write SetOffset;
+    property Size: TDebugInfoOffset read FSize write SetSize;
+    property Characteristics: Cardinal read FCharacteristics write FCharacteristics; // TODO
   end;
 
-  TDebugInfoSegmentClasses = class
-  private type
-    TDebugInfoSegmentClassList = array[TDebugInfoSegmentClassType] of TDebugInfoSegmentClass;
+  TDebugInfoSegments = class
   private
-    FSegmentClasses: TDebugInfoSegmentClassList;
-    FNames: TDictionary<string, TDebugInfoSegmentClass>;
+    FSegments: TObjectList<TDebugInfoSegment>;
+    FNames: TDictionary<string, TDebugInfoSegment>;
   protected
-    function GetSegment(AClassType: TDebugInfoSegmentClassType): TDebugInfoSegmentClass;
+    function GetCount: integer;
+    function GetSegment(AIndex: Cardinal): TDebugInfoSegment;
   public
     constructor Create;
     destructor Destroy; override;
 
-    function Add(AValue: integer; AClassType: TDebugInfoSegmentClassType; const AName: string): TDebugInfoSegmentClass; overload;
-    function Add(AValue: integer; const AClassName: string; const AName: string): TDebugInfoSegmentClass; overload;
-    function FindByValue(AValue: integer): TDebugInfoSegmentClass;
-    function FindByName(const AName: string): TDebugInfoSegmentClass;
+    function Add(AIndex: Cardinal; AClassType: TDebugInfoSegmentClass; const AName: string): TDebugInfoSegment; overload;
+    function Add(AIndex: Cardinal; const AClassName: string; const AName: string): TDebugInfoSegment; overload;
+    function FindByIndex(AIndex: Cardinal): TDebugInfoSegment;
+    function FindByName(const AName: string): TDebugInfoSegment;
+    function FindByClassType(AClassType: TDebugInfoSegmentClass): TDebugInfoSegment;
+    function FindByOffset(AOffset: TDebugInfoOffset): TDebugInfoSegment;
 
-    property SegmentClass[AClassType: TDebugInfoSegmentClassType]: TDebugInfoSegmentClass read GetSegment; default;
+    property Count: integer read GetCount;
+    property Segments[Index: Cardinal]: TDebugInfoSegment read GetSegment; default;
 
-    // TODO : Implement GetEnumerator
+    function GetEnumerator: TEnumerator<TDebugInfoSegment>;
   end;
 
-type
+
   TDebugInfoSourceFile = class
   private
     FFilename: string;
@@ -82,17 +97,21 @@ type
     TDebugInfoSourceFileList = TObjectDictionary<string, TDebugInfoSourceFile>;
   private
     FSourceFiles: TDebugInfoSourceFileList;
+    FOwner: TDebugInfo;
+  protected
+    function GetCount: integer;
   public
-    constructor Create;
+    constructor Create(AOwner: TDebugInfo = nil);
     destructor Destroy; override;
 
     function Add(const AFilename: string): TDebugInfoSourceFile;
+    function First: TDebugInfoSourceFile;
+
+    property Count: integer read GetCount;
 
     function GetEnumerator: TEnumerator<TDebugInfoSourceFile>;
   end;
 
-type
-  TDebugInfoModule = class;
 
   TDebugInfoSourceLine = class
   private
@@ -100,18 +119,24 @@ type
     FModule: TDebugInfoModule;
     FLineNumber: integer;
     FOffset: TDebugInfoOffset;
+  protected
+    function GetAddress: TDebugInfoOffset;
   public
     property Module: TDebugInfoModule read FModule write FModule;
     property SourceFile: TDebugInfoSourceFile read FSourceFile write FSourceFile;
     property LineNumber: integer read FLineNumber write FLineNumber;
     // Offset is relative to module
     property Offset: TDebugInfoOffset read FOffset write FOffset;
+
+    // Address = Line.Offset + Line.Module.Offset + Line.Module.Segment.Offset
+    property Address: TDebugInfoOffset read GetAddress;
   end;
 
   TDebugInfoSourceLines = class
   private
     FModule: TDebugInfoModule;
     FSourceLines: TObjectList<TDebugInfoSourceLine>;
+    FComparer: IComparer<TDebugInfoSourceLine>;
   protected
     function GetEmpty: boolean;
   public
@@ -125,12 +150,15 @@ type
     function GetEnumerator: TEnumerator<TDebugInfoSourceLine>;
   end;
 
+
   TDebugInfoSymbol = class
   private
     FModule: TDebugInfoModule;
     FName: string;
     FOffset: TDebugInfoOffset;
     FSize: TDebugInfoOffset;
+  protected
+    function GetAddress: TDebugInfoOffset;
   public
     constructor Create(AModule: TDebugInfoModule; const AName: string; AOffset: TDebugInfoOffset);
 
@@ -139,6 +167,9 @@ type
     // Offset is relative to module
     property Offset: TDebugInfoOffset read FOffset;
     property Size: TDebugInfoOffset read FSize write FSize;
+
+    // Address = Symbol.Offset + Symbol.Module.Offset + Symbol.Module.Segment.Offset
+    property Address: TDebugInfoOffset read GetAddress;
   end;
 
   TDebugInfoSymbols = class
@@ -147,6 +178,7 @@ type
   private
     FModule: TDebugInfoModule;
     FSymbols: TDebugInfoSymbolList;
+    FComparer: IComparer<TDebugInfoSymbol>;
   public
     constructor Create(AModule: TDebugInfoModule);
     destructor Destroy; override;
@@ -158,24 +190,36 @@ type
     function GetEnumerator: TEnumerator<TDebugInfoSymbol>;
   end;
 
+
   TDebugInfoModule = class
   private
+    FDebugInfo: TDebugInfo;
     FName: string;
-    FSegmentClass: TDebugInfoSegmentClass;
+    FObjectName: string;
+    FSegment: TDebugInfoSegment;
     FOffset: TDebugInfoOffset;
     FSize: TDebugInfoOffset;
     FSourceFiles: TDebugInfoSourceFiles;
     FSourceLines: TDebugInfoSourceLines;
     FSymbols: TDebugInfoSymbols;
+  protected
+    function GetObjectName: string;
+    function GetAddress: TDebugInfoOffset;
   public
-    constructor Create(const AName: string; ASegmentClass: TDebugInfoSegmentClass; AOffset, ASize: TDebugInfoOffset);
+    constructor Create(ADebugInfo: TDebugInfo; const AName: string; ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset);
     destructor Destroy; override;
 
+    property DebugInfo: TDebugInfo read FDebugInfo;
+
     property Name: string read FName;
-    property SegmentClass: TDebugInfoSegmentClass read FSegmentClass;
+    property ObjectName: string read GetObjectName write FObjectName;
+    property Segment: TDebugInfoSegment read FSegment;
     // Offset is relative to segment
     property Offset: TDebugInfoOffset read FOffset;
     property Size: TDebugInfoOffset read FSize;
+
+    // Address = Module.Offset + Module.Segment.Offset
+    property Address: TDebugInfoOffset read GetAddress;
 
     property SourceFiles: TDebugInfoSourceFiles read FSourceFiles;
     property SourceLines: TDebugInfoSourceLines read FSourceLines;
@@ -186,40 +230,48 @@ type
   private type
     TDebugInfoModuleList = TObjectList<TDebugInfoModule>;
   private
+    FDebugInfo: TDebugInfo;
     FModules: TDebugInfoModuleList;
+    FComparer: IComparer<TDebugInfoModule>;
   protected
+    function GetCount: integer;
     function GetEmpty: boolean;
   public
-    constructor Create;
+    constructor Create(ADebugInfo: TDebugInfo);
     destructor Destroy; override;
 
-    function Add(const AName: string; ASegmentClass: TDebugInfoSegmentClass; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
-    function FindByName(const AName: string; ASegmentClass: TDebugInfoSegmentClass): TDebugInfoModule;
-    function FindByOffset(ASegmentClass: TDebugInfoSegmentClass; AOffset: TDebugInfoOffset): TDebugInfoModule;
+    function Add(const AName: string; ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
+    function FindByName(const AName: string; ASegment: TDebugInfoSegment): TDebugInfoModule;
+    function FindByOffset(ASegment: TDebugInfoSegment; AOffset: TDebugInfoOffset): TDebugInfoModule;
+    function FindOverlap(ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
 
+    property Count: integer read GetCount;
     property Empty: boolean read GetEmpty;
 
     function GetEnumerator: TEnumerator<TDebugInfoModule>;
   end;
 
-type
+
   TDebugInfo = class
   private
-    FSegmentClasses: TDebugInfoSegmentClasses;
+    FSegments: TDebugInfoSegments;
     FModules: TDebugInfoModules;
+    FSourceFiles: TDebugInfoSourceFiles;
   public
     constructor Create;
     destructor Destroy; override;
 
-    property SegmentClasses: TDebugInfoSegmentClasses read FSegmentClasses;
+    property Segments: TDebugInfoSegments read FSegments;
     property Modules: TDebugInfoModules read FModules;
+    property SourceFiles: TDebugInfoSourceFiles read FSourceFiles;
   end;
+
 
 implementation
 
 uses
-  SysUtils,
-  Generics.Defaults;
+  Winapi.Windows,
+  System.SysUtils;
 
 { TDebugInfo }
 
@@ -227,30 +279,34 @@ constructor TDebugInfo.Create;
 begin
   inherited Create;
 
-  FSegmentClasses := TDebugInfoSegmentClasses.Create;
-  FModules := TDebugInfoModules.Create;
+  FSegments := TDebugInfoSegments.Create;
+  FModules := TDebugInfoModules.Create(Self);
+  FSourceFiles := TDebugInfoSourceFiles.Create;
 end;
 
 destructor TDebugInfo.Destroy;
 begin
-  FSegmentClasses.Free;
+  FSegments.Free;
   FModules.Free;
+  FSourceFiles.Free;
 
   inherited;
 end;
 
 { TDebugInfoModule }
 
-constructor TDebugInfoModule.Create(const AName: string; ASegmentClass: TDebugInfoSegmentClass; AOffset, ASize: TDebugInfoOffset);
+constructor TDebugInfoModule.Create(ADebugInfo: TDebugInfo; const AName: string; ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset);
 begin
   inherited Create;
 
+  FDebugInfo := ADebugInfo;
+
   FName := AName;
-  FSegmentClass := ASegmentClass;
+  FSegment := ASegment;
   FOffset := AOffset;
   FSize := ASize;
 
-  FSourceFiles := TDebugInfoSourceFiles.Create;
+  FSourceFiles := TDebugInfoSourceFiles.Create(FDebugInfo);
   FSourceLines := TDebugInfoSourceLines.Create(Self);
   FSymbols := TDebugInfoSymbols.Create(Self);
 end;
@@ -262,6 +318,18 @@ begin
   FSymbols.Free;
 
   inherited;
+end;
+
+function TDebugInfoModule.GetAddress: TDebugInfoOffset;
+begin
+  Result := Segment.Offset + Offset;
+end;
+
+function TDebugInfoModule.GetObjectName: string;
+begin
+  Result := FObjectName;
+  if (Result = '') then
+    Result := FName;;
 end;
 
 { TDebugInfoSymbols }
@@ -300,12 +368,15 @@ function TDebugInfoSymbols.Add(const AName: string; AOffset: TDebugInfoOffset): 
 begin
   Result := TDebugInfoSymbol.Create(FModule, AName, AOffset);
 
+  if (FComparer = nil) then
+    FComparer := TComparer<TDebugInfoSymbol>.Construct(
+      function(const Left, Right: TDebugInfoSymbol): integer
+      begin
+        Result := integer(Left.Offset) - integer(Right.Offset);
+      end);
+
   var Index: integer;
-  if (FSymbols.BinarySearch(Result, Index, TComparer<TDebugInfoSymbol>.Construct(
-    function(const Left, Right: TDebugInfoSymbol): integer
-    begin
-      Result := Left.Offset-Right.Offset;
-    end))) then
+  if (FSymbols.BinarySearch(Result, Index, FComparer)) then
   begin
     // Return existing if we have an exact duplicate of Name+Offset
 
@@ -336,19 +407,22 @@ end;
 
 function TDebugInfoModuleComparer.Compare(const Left, Right: TDebugInfoModule): Integer;
 begin
-  Result := Left.SegmentClass.Value - Right.SegmentClass.Value;
+  Result := integer(Left.Segment.Index) - integer(Right.Segment.Index);
   if (Result = 0) then
-    Result := Left.Offset - Right.Offset;
+    Result := integer(Left.Offset) - integer(Right.Offset); // Cast to avoid integer overflow
 end;
 
 
-function TDebugInfoModules.Add(const AName: string; ASegmentClass: TDebugInfoSegmentClass; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
+function TDebugInfoModules.Add(const AName: string; ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
 begin
-  Result := TDebugInfoModule.Create(AName, ASegmentClass, AOffset, ASize);
+  Result := TDebugInfoModule.Create(FDebugInfo, AName, ASegment, AOffset, ASize);
   try
 
+    if (FComparer = niL) then
+      FComparer := TDebugInfoModuleComparer.New;
+
     var Index: integer;
-    if (FModules.BinarySearch(Result, Index, TDebugInfoModuleComparer.New)) then
+    if (FModules.BinarySearch(Result, Index, FComparer)) then
       raise Exception.Create('Cannot add overlapping modules');
 
     FModules.Insert(Index, Result);
@@ -359,10 +433,11 @@ begin
   end;
 end;
 
-constructor TDebugInfoModules.Create;
+constructor TDebugInfoModules.Create(ADebugInfo: TDebugInfo);
 begin
   inherited Create;
 
+  FDebugInfo := ADebugInfo;
   FModules := TDebugInfoModuleList.Create;
 end;
 
@@ -373,16 +448,17 @@ begin
   inherited;
 end;
 
-function TDebugInfoModules.FindByName(const AName: string; ASegmentClass: TDebugInfoSegmentClass): TDebugInfoModule;
+function TDebugInfoModules.FindByName(const AName: string; ASegment: TDebugInfoSegment): TDebugInfoModule;
 begin
   for var Module in FModules do
-    if (Module.SegmentClass = ASegmentClass) and (Module.Name = AName) then
+    if (Module.Segment = ASegment) and (Module.Name = AName) then
       Exit(Module);
   Result := nil;
 end;
 
-function TDebugInfoModules.FindByOffset(ASegmentClass: TDebugInfoSegmentClass; AOffset: TDebugInfoOffset): TDebugInfoModule;
+function TDebugInfoModules.FindByOffset(ASegment: TDebugInfoSegment; AOffset: TDebugInfoOffset): TDebugInfoModule;
 begin
+  // Binary search
   var L := 0;
   var H := FModules.Count-1;
 
@@ -392,10 +468,10 @@ begin
 
     var Module := FModules[mid];
 
-    if (ASegmentClass.Value < Module.SegmentClass.Value) then
+    if (ASegment.Index < Module.Segment.Index) then
       H := mid - 1
     else
-    if (ASegmentClass.Value > Module.SegmentClass.Value) then
+    if (ASegment.Index > Module.Segment.Index) then
       L := mid + 1
     else
     begin
@@ -410,6 +486,47 @@ begin
   end;
 
   Result := nil;
+end;
+
+function TDebugInfoModules.FindOverlap(ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
+begin
+  // Binary search
+  var L := 0;
+  var H := FModules.Count-1;
+
+  while (L <= H) do
+  begin
+    var mid := L + (H - L) shr 1;
+
+    var Module := FModules[mid];
+
+    if (ASegment.Index < Module.Segment.Index) then
+      H := mid - 1
+    else
+    if (ASegment.Index > Module.Segment.Index) then
+      L := mid + 1
+    else
+    begin
+      if (AOffset < Module.Offset) then
+      begin
+        if (AOffset+ASize < Module.Offset) then
+          H := mid - 1
+        else
+          Exit(Module);
+      end else
+      if (AOffset >= Module.Offset+Module.Size) then
+        L := mid + 1
+      else
+        Exit(Module);
+    end;
+  end;
+
+  Result := nil;
+end;
+
+function TDebugInfoModules.GetCount: integer;
+begin
+  Result := FModules.Count;
 end;
 
 function TDebugInfoModules.GetEmpty: boolean;
@@ -433,99 +550,171 @@ begin
   FOffset := AOffset;
 end;
 
-{ TDebugInfoSegmentClasses }
+function TDebugInfoSymbol.GetAddress: TDebugInfoOffset;
+begin
+  Result := Module.Address + Offset;
+end;
 
-constructor TDebugInfoSegmentClasses.Create;
+{ TDebugInfoSegments }
+
+constructor TDebugInfoSegments.Create;
 begin
   inherited Create;
 
-  FNames := TDictionary<string, TDebugInfoSegmentClass>.Create;
-
-  for var SegClassType := Low(TDebugInfoSegmentClassType) to High(TDebugInfoSegmentClassType) do
-    FSegmentClasses[SegClassType] := nil;
+  FSegments := TObjectList<TDebugInfoSegment>.Create(True);
+  FNames := TDictionary<string, TDebugInfoSegment>.Create;
 end;
 
-destructor TDebugInfoSegmentClasses.Destroy;
+destructor TDebugInfoSegments.Destroy;
 begin
   FNames.Free;
-
-  for var SegmentClass in FSegmentClasses do
-    SegmentClass.Free;
+  FSegments.Free;
 
   inherited;
 end;
 
-function TDebugInfoSegmentClasses.Add(AValue: integer; const AClassName: string; const AName: string): TDebugInfoSegmentClass;
+function TDebugInfoSegments.Add(AIndex: Cardinal; const AClassName: string; const AName: string): TDebugInfoSegment;
 begin
-  var SegClassType := TDebugInfoSegmentClass.ClassNameToClassType(AClassName);
+  var SegClassType := TDebugInfoSegment.ClassNameToClassType(AClassName);
 
-  Result := Add(AValue, SegClassType, AName);
+  Result := Add(AIndex, SegClassType, AName);
 end;
 
-function TDebugInfoSegmentClasses.Add(AValue: integer; AClassType: TDebugInfoSegmentClassType; const AName: string): TDebugInfoSegmentClass;
+function TDebugInfoSegments.Add(AIndex: Cardinal; AClassType: TDebugInfoSegmentClass; const AName: string): TDebugInfoSegment;
 begin
-  if (FSegmentClasses[AClassType] <> nil) then
-    raise Exception.Create('Duplicate Segment Class');
+  if (AIndex = 0) then
+    raise Exception.Create('Invalid Segment index');
 
-  Result := TDebugInfoSegmentClass.Create(AValue, AClassType);
-  try
+  if (FNames.ContainsKey(AName)) then
+    raise Exception.Create('Duplicate Segment name');
 
-    Result.Name := AName;
+  // Index is 1-based
+  var ListIndex := integer(AIndex-1);
 
-    FNames.Add(AName, Result);
+  if (ListIndex < FSegments.Count) then
+  begin
+    if (FSegments[ListIndex] <> nil) then
+      raise Exception.Create('Duplicate Segment index');
+  end else
+    FSegments.Count := ListIndex+1;
 
-  except
-    Result.Free;
-    raise;
-  end;
+  Result := TDebugInfoSegment.Create(Self, AIndex, AClassType);
+  Result.Name := AName;
 
-  FSegmentClasses[AClassType] := Result;
+  FSegments[ListIndex] := Result;
+  FNames.Add(AName, Result);
 end;
 
-function TDebugInfoSegmentClasses.FindByName(const AName: string): TDebugInfoSegmentClass;
+function TDebugInfoSegments.FindByName(const AName: string): TDebugInfoSegment;
 begin
   if (not FNames.TryGetValue(AName, Result)) then
     Result := nil;
 end;
 
-function TDebugInfoSegmentClasses.FindByValue(AValue: integer): TDebugInfoSegmentClass;
+function TDebugInfoSegments.FindByIndex(AIndex: Cardinal): TDebugInfoSegment;
 begin
-  for var SegmentClass in FSegmentClasses do
-    if (SegmentClass.Value = AValue) then
-      Exit(SegmentClass);
+  // Index is 1-based
+  if (AIndex <= 0) then
+    raise Exception.Create('Invalid Segment index');
+
+  Result := FSegments[AIndex - 1];
+end;
+
+function TDebugInfoSegments.GetCount: integer;
+begin
+  Result := FSegments.Count;
+end;
+
+function TDebugInfoSegments.GetEnumerator: TEnumerator<TDebugInfoSegment>;
+begin
+  Result := FSegments.GetEnumerator;
+end;
+
+function TDebugInfoSegments.GetSegment(AIndex: Cardinal): TDebugInfoSegment;
+begin
+  // Index is 1-based
+  if (AIndex <= 0) then
+    raise Exception.Create('Invalid Segment index');
+
+  Result := FSegments[AIndex - 1];
+
+  if (Result = nil) then
+    raise Exception.CreateFmt('Segment index %d does not exist', [AIndex]);
+end;
+
+function TDebugInfoSegments.FindByClassType(AClassType: TDebugInfoSegmentClass): TDebugInfoSegment;
+begin
+  for Result in FSegments do
+    if (Result.SegClassType = AClassType) then
+      Exit;
 
   Result := nil;
 end;
 
-function TDebugInfoSegmentClasses.GetSegment(AClassType: TDebugInfoSegmentClassType): TDebugInfoSegmentClass;
+function TDebugInfoSegments.FindByOffset(AOffset: TDebugInfoOffset): TDebugInfoSegment;
 begin
-  Result := FSegmentClasses[AClassType];
+  for Result in FSegments do
+    if (AOffset >= Result.Offset) and (AOffset < Result.Offset+Result.Size) then
+      Exit;
+
+  Result := nil;
 end;
 
-{ TDebugInfoSegmentClass }
+{ TDebugInfoSegment }
 
-constructor TDebugInfoSegmentClass.Create(AValue: integer; AClassType: TDebugInfoSegmentClassType);
+constructor TDebugInfoSegment.Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; AClassType: TDebugInfoSegmentClass);
 begin
   inherited Create;
 
-  FValue := AValue;
+  FOwner := AOwner;
+  FIndex := AIndex;
   FSegClassType := AClassType;
+
+  FCharacteristics := IMAGE_SCN_MEM_READ;
+  if (AClassType = sctCODE) then
+    FCharacteristics := FCharacteristics or IMAGE_SCN_MEM_EXECUTE or IMAGE_SCN_CNT_CODE;
 end;
 
-constructor TDebugInfoSegmentClass.Create(AValue: integer; const AClassName: string);
+constructor TDebugInfoSegment.Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; const AClassName: string);
 begin
   var SegClassType := ClassNameToClassType(AClassName);
-  Create(AValue, SegClassType);
+  Create(AOwner, AIndex, SegClassType);
 end;
 
-function TDebugInfoSegmentClass.GetSegClassName: string;
+function TDebugInfoSegment.GetSegClassName: string;
 begin
   Result := sClassNames[FSegClassType];
 end;
 
-class function TDebugInfoSegmentClass.ClassNameToClassType(const AClassName: string): TDebugInfoSegmentClassType;
+procedure TDebugInfoSegment.SetOffset(const Value: TDebugInfoOffset);
 begin
-  for var SegClassType := Low(TDebugInfoSegmentClassType) to High(TDebugInfoSegmentClassType) do
+  FOffset := Value;
+  CheckOverlap;
+end;
+
+procedure TDebugInfoSegment.SetSize(const Value: TDebugInfoOffset);
+begin
+  FSize := Value;
+  CheckOverlap;
+end;
+
+procedure TDebugInfoSegment.CheckOverlap;
+begin
+  for var Segment in FOwner do
+  begin
+    if (Segment = Self) then
+      continue;
+
+    if ((Offset >= Segment.Offset) and (Offset < Segment.Offset+Segment.Size)) or // Start is within other range
+      ((Offset+Size <= Segment.Offset) and (Offset+Size > Segment.Offset+Segment.Size)) or // Start is within other range
+      ((Offset <= Segment.Offset) and (Offset+Size > Segment.Offset)) then // Other is within range
+      raise Exception.Create('Overlapping segments');
+  end;
+end;
+
+class function TDebugInfoSegment.ClassNameToClassType(const AClassName: string): TDebugInfoSegmentClass;
+begin
+  for var SegClassType := Low(TDebugInfoSegmentClass) to High(TDebugInfoSegmentClass) do
     if (AClassName = sClassNames[SegClassType]) then
       Exit(SegClassType);
 
@@ -545,6 +734,14 @@ end;
 
 function TDebugInfoSourceFiles.Add(const AFilename: string): TDebugInfoSourceFile;
 begin
+  if (FOwner <> nil) then
+  begin
+    // Delegate lookup/creation to owner...
+    Result := FOwner.SourceFiles.Add(AFilename);
+
+    // ... and add result to local list
+    FSourceFiles.AddOrSetValue(AFilename, Result);
+  end else
   if (not FSourceFiles.TryGetValue(AFilename, Result)) then
   begin
     Result := TDebugInfoSourceFile.Create(AFilename);
@@ -552,11 +749,20 @@ begin
   end;
 end;
 
-constructor TDebugInfoSourceFiles.Create;
+constructor TDebugInfoSourceFiles.Create(AOwner: TDebugInfo);
 begin
   inherited Create;
 
-  FSourceFiles := TDebugInfoSourceFileList.Create([doOwnsValues]);
+  FOwner := AOwner;
+
+  // If Owner=nil then we own the values
+  var Ownerships: TDictionaryOwnerships;
+  if (FOwner = nil) then
+    Ownerships:= [doOwnsValues]
+  else
+    Ownerships:= [];
+
+  FSourceFiles := TDebugInfoSourceFileList.Create(Ownerships);
 end;
 
 destructor TDebugInfoSourceFiles.Destroy;
@@ -564,6 +770,21 @@ begin
   FSourceFiles.Free;
 
   inherited;
+end;
+
+function TDebugInfoSourceFiles.First: TDebugInfoSourceFile;
+begin
+  // It's more efficient to create an enumerator than to access the Values array
+  if (FSourceFiles.Count > 0) then
+    for var Pair in FSourceFiles do
+      Exit(Pair.Value);
+
+  Result := nil;
+end;
+
+function TDebugInfoSourceFiles.GetCount: integer;
+begin
+  Result := FSourceFiles.Count;
 end;
 
 function TDebugInfoSourceFiles.GetEnumerator: TEnumerator<TDebugInfoSourceFile>;
@@ -583,27 +804,29 @@ begin
   Result.LineNumber := ALineNumber;
   Result.Offset := AOffset;
 
-  // Order lines by SourceFile, Offset, LineNumber
-  var Comparer: IComparer<TDebugInfoSourceLine> := TComparer<TDebugInfoSourceLine>.Construct(
-    function(const Left, Right: TDebugInfoSourceLine): integer
-    begin
-      Result := NativeInt(Left.SourceFile)-NativeInt(Right.SourceFile);
+  // Order lines by SourceFile, LineNumber, Offset
+  if (FComparer = nil) then
+    FComparer := TComparer<TDebugInfoSourceLine>.Construct(
+      function(const Left, Right: TDebugInfoSourceLine): integer
+      begin
+        Result := NativeInt(Left.SourceFile)-NativeInt(Right.SourceFile);
 
-      if (Result = 0) then
-        Result := Left.Offset-Right.Offset;
+        if (Result = 0) then
+          Result := Left.LineNumber - Right.LineNumber;
 
-      if (Result = 0) then
-        Result := Left.LineNumber-Right.LineNumber;
-    end);
+        if (Result = 0) then
+          Result := integer(Left.Offset) - integer(Right.Offset);
+      end);
+
+  // Note that multiple offsets can map to the same Source File+Line Number.
+  // This can for example be caused by include files, inlining and generics
+  // expansion.
 
   var Index: integer;
-  if (not FSourceLines.BinarySearch(Result, Index, Comparer)) then
+  if (not FSourceLines.BinarySearch(Result, Index, FComparer)) then
     FSourceLines.Insert(Index, Result)
   else
     Result.Free;
-
-  for var i := 0 to FSourceLines.Count-2 do
-    Assert(Comparer.Compare(FSourceLines[i], FSourceLines[i+1]) < 0, IntToStr(FSourceLines.Count));
 end;
 
 constructor TDebugInfoSourceLines.Create(AModule: TDebugInfoModule);
@@ -629,6 +852,13 @@ end;
 function TDebugInfoSourceLines.GetEnumerator: TEnumerator<TDebugInfoSourceLine>;
 begin
   Result := FSourceLines.GetEnumerator;
+end;
+
+{ TDebugInfoSourceLine }
+
+function TDebugInfoSourceLine.GetAddress: TDebugInfoOffset;
+begin
+  Result := Offset + Module.Offset + Module.Segment.Offset
 end;
 
 end.
