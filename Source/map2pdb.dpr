@@ -80,7 +80,10 @@ begin
     DisplayBanner;
 
     var SourceFilename: string;
-    var TargetFilename: string;
+    var TargetFilename: string := '';
+    var PEFilename: string := '';
+
+    FindCmdLineSwitch('bind', PEFilename, True, [clstValueAppended]);
 
     if (not FindParam(0, SourceFilename)) or (FindCmdLineSwitch('h')) or (FindCmdLineSwitch('?')) then
     begin
@@ -88,25 +91,23 @@ begin
       exit;
     end;
 
-    var Test := FindCmdLineSwitch('test');
-    var Logging := FindCmdLineSwitch('v');
+    var Test := FindCmdLineSwitch('t') or FindCmdLineSwitch('test');
+    var Logging := FindCmdLineSwitch('v') or FindCmdLineSwitch('verbose');
 
     var TargetType: TTargetType := ttPDB;
-    if (FindCmdLineSwitch('yaml')) then
+    if (FindCmdLineSwitch('yaml', TargetFilename, True, [clstValueAppended])) or (FindCmdLineSwitch('yaml')) then
     begin
 
       TargetType := ttYAML;
 
-      FindCmdLineSwitch('yaml', TargetFilename);
-
     end else
     begin
 
-      FindCmdLineSwitch('pdb', TargetFilename);
+      FindCmdLineSwitch('pdb', TargetFilename, True, [clstValueAppended]);
 
       // If we're both building a PDB and binding it in one go then we can use
       // a new GUID for both.
-      if (FindCmdLineSwitch('bind')) then
+      if (PEFilename <> '') or (FindCmdLineSwitch('bind')) then
       begin
         PdbBuildSignature := TGUID.NewGuid;
 
@@ -159,13 +160,10 @@ begin
     end;
 
 
-    if (FindCmdLineSwitch('bind')) then
+    if (PEFilename <> '') or (FindCmdLineSwitch('bind')) then
     begin
       if (TargetType <> ttPDB) then
         raise Exception.Create('-bind requires PDB output');
-
-      var PEFilename := '';
-      FindCmdLineSwitch('bind', PEFilename);
 
       if (PEFilename = '') then
       begin
