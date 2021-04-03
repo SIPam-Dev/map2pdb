@@ -14,6 +14,9 @@ program map2pdb;
 {$R *.res}
 
 uses
+{$ifdef MADEXCEPT}
+  madExcept,
+{$endif MADEXCEPT}
   System.SysUtils,
   System.IOUtils,
   debug.info.reader.map in 'debug.info.reader.map.pas',
@@ -178,6 +181,16 @@ begin
 
 
   except
+{$ifdef MADEXCEPT}
+    madExcept.HandleException;
+
+    if (DebugHook <> 0) then
+    begin
+      Writeln('Press enter to continue');
+      Readln;
+    end;
+    Halt(1);
+{$else MADEXCEPT}
     on E: Exception do
     begin
       Writeln(E.ClassName, ': ', E.Message);
@@ -190,6 +203,7 @@ begin
 
       Halt(1);
     end;
+{$endif MADEXCEPT}
   end;
 end.
 
