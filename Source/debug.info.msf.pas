@@ -16,8 +16,6 @@ interface
 uses
   System.Generics.Collections,
   System.Classes,
-//  Winapi.Windows,
-//  debug.info,
   debug.info.pdb;
 
 
@@ -77,6 +75,13 @@ type
   // as DWORDs (e.g. hash tables).
   TMSFStreamIndex = Word;
 
+  TMSFStreamState = (
+    ssAllocated,        // Stream has been allocated
+    ssIndex,            // A stream index has been assigned
+    ssOpen,             // Stream has been opened
+    ssClosed            // Stream has been closed
+  );
+
   TMSFStream = class
   public
     const NullBlockIndex = $FFFFFFFF;
@@ -84,7 +89,7 @@ type
   strict private
     FMSFFile: TMSFFile;
     FWriter: TBinaryBlockWriter;
-    FFinalized: boolean;
+    FState: TMSFStreamState;
     FIndex: TMSFStreamIndex;
     FBlockIndex: Cardinal;
     FLength: Cardinal;
@@ -126,10 +131,11 @@ type
 
     // IsFixed: True if stream is one of the fixed streams
     property IsFixed: boolean read GetIsFixed;
-    // IsValid: True if stream has been opened and the Index value referenced
+    // IsValid: True if stream has been opened or the Index value referenced
     property IsValid: boolean read GetIsValid;
 
     property HasIndex: boolean read GetHasIndex;
+    property State: TMSFStreamState read FState;
   end;
 
 
@@ -153,7 +159,8 @@ type
   strict private
     procedure WriteSuperBlock(IndexStream, DirectoryStream: TMSFStream);
     procedure WriteBlockMap;
-    procedure WriteDirectoryIndex(IndexStream: TMSFStream; BlockIndex: Cardinal);
+    procedure WriteStreamBlockList(Writer: TBinaryBlockWriter; Stream: TMSFStream);
+    procedure WriteDirectoryIndex(IndexStream, DirectoryStream: TMSFStream);
     procedure WriteDirectory(DirectoryStream: TMSFStream);
 
     function GetCount: integer;
@@ -232,7 +239,7 @@ begin
 
   // Preallocate the fixed streams so their indices aren't used by other streams
   for var StreamIndex := Low(PDBStreamIndex) to High(PDBStreamIndex) do
-    // Allocate and touch the stream so the stream index is allocated
+    // Allocate and touch the stream so the stream index is assigned
     AllocateStream.Touch;
 
 
@@ -274,6 +281,9 @@ procedure TMSFFile.EndFile;
 begin
   Assert(FState = TFileState.fsOpen);
 
+  Assert(FCurrentStream = nil);
+
+  // Create streams directly so they do not appear in the stream list
   var IndexStream := TMSFStream.Create(Self);
   var DirectoryStream := TMSFStream.Create(Self);
   try
@@ -301,7 +311,7 @@ begin
 
     // Write a pointer to the directory stream.
     // The MSF Superblock will point to this stream.
-    WriteDirectoryIndex(IndexStream, DirectoryStream.BlockIndex);
+    WriteDirectoryIndex(IndexStream, DirectoryStream);
 
 
     // The above was the last block so make sure file is physically padded.
@@ -379,6 +389,21 @@ begin
   Assert(False);
 end;
 
+procedure TMSFFile.WriteStreamBlockList(Writer: TBinaryBlockWriter; Stream: TMSFStream);
+begin
+  // Take advantage of the fact that in our case all blocks within a stream are contiguous
+  var BlockCount := Ceil(Stream.Length / FBlockSize);
+  var BlockIndex := Stream.BlockIndex;
+  while (BlockCount > 0) do
+  begin
+    Assert(BlockIndex <> TMSFStream.NullBlockIndex);
+    Writer.Write(BlockIndex);
+
+    Dec(BlockCount);
+    Inc(BlockIndex);
+  end;
+end;
+
 procedure TMSFFile.WriteSuperBlock(IndexStream, DirectoryStream: TMSFStream);
 var
   MSFSuperBlock: TMSFSuperBlock;
@@ -407,33 +432,18 @@ begin
 end;
 
 
-procedure TMSFFile.WriteDirectoryIndex(IndexStream: TMSFStream; BlockIndex: Cardinal);
+procedure TMSFFile.WriteDirectoryIndex(IndexStream, DirectoryStream: TMSFStream);
 begin
   IndexStream.BeginStream;
 
-  IndexStream.Writer.Write(BlockIndex); // Block index of where the directory actually lives
+  // Write list of blocks of where the directory actually lives
+  WriteStreamBlockList(IndexStream.Writer, DirectoryStream);
 
   IndexStream.EndStream;
 end;
 
 
 procedure TMSFFile.WriteDirectory(DirectoryStream: TMSFStream);
-
-  procedure WriteDirectoryBlockList(Stream: TMSFStream);
-  begin
-    // Take advantage of the fact that in our case all blocks within a stream are contiguous
-    var BlockCount := Ceil(Stream.Length / FBlockSize);
-    var BlockIndex := Stream.BlockIndex;
-    while (BlockCount > 0) do
-    begin
-      Assert(BlockIndex <> TMSFStream.NullBlockIndex);
-      DirectoryStream.Writer.Write(BlockIndex);
-
-      Dec(BlockCount);
-      Inc(BlockIndex);
-    end;
-  end;
-
 begin
   DirectoryStream.BeginStream;
 
@@ -443,7 +453,10 @@ begin
   var Count: Cardinal := 0;
   for var Stream in FStreams do
     if (Stream.IsValid) or (Stream.IsFixed) then
+    begin
+      Assert(Stream.State in [TMSFStreamState.ssIndex, TMSFStreamState.ssClosed]);
       Inc(Count);
+    end;
   DirectoryStream.Writer.Write(Cardinal(Count));
 
   // Stream sizes
@@ -454,7 +467,7 @@ begin
   // Stream blocks
   for var Stream in FStreams do
     if (Stream.IsValid) then
-      WriteDirectoryBlockList(Stream);
+      WriteStreamBlockList(DirectoryStream.Writer, Stream);
 
   DirectoryStream.EndStream;
 end;
@@ -476,7 +489,7 @@ end;
 function TMSFStream.BeginStream(Poison: boolean): Cardinal;
 begin
   Assert(FWriter = nil);
-  Assert(not FFinalized);
+  Assert(FState in [TMSFStreamState.ssAllocated, TMSFStreamState.ssIndex]);
 
   Touch;
 
@@ -484,6 +497,7 @@ begin
 
   FBlockIndex := FWriter.BeginBlock(Poison);
   FOffset := FWriter.BaseStream.Position;
+  FState := TMSFStreamState.ssOpen;
 
   Result := FBlockIndex;
 end;
@@ -491,13 +505,14 @@ end;
 function TMSFStream.EndStream: Cardinal;
 begin
   Assert(FWriter <> nil);
+  Assert(FState = TMSFStreamState.ssOpen);
 
   FLength := Cardinal(FWriter.BaseStream.Position - FOffset);
   FWriter.EndBlock;
 
   FMSFFile.EndStream(Self);
   FWriter := nil;
-  FFinalized := True;
+  FState := TMSFStreamState.ssClosed;
 
   Result := FLength;
 end;
@@ -521,12 +536,15 @@ end;
 
 function TMSFStream.GetIsValid: boolean;
 begin
-  Result := (FIndex <> NullStreamIndex) or (FBlockIndex <> NullBlockIndex);
+  Result := (FState > TMSFStreamState.ssAllocated);
 end;
 
 function TMSFStream.GetWriter: TBinaryBlockWriter;
 begin
-  Assert((FIndex <> NullStreamIndex) and (FBlockIndex <> NullBlockIndex));
+  Assert(FState = TMSFStreamState.ssOpen);
+  Assert(FIndex <> NullStreamIndex);
+  Assert(FBlockIndex <> NullBlockIndex);
+
   Result := FWriter;
 end;
 
@@ -535,7 +553,14 @@ begin
   // Stream has now been referenced. Allocate a stream index to ensure the stream will
   // be written to the directory.
   if (FIndex = NullStreamIndex) then
+  begin
+    Assert(FState = TMSFStreamState.ssAllocated);
+
     FIndex := FMSFFile.AllocateStreamIndex;
+    FState := TMSFStreamState.ssIndex;
+  end;
+
+  Assert(FState >= TMSFStreamState.ssIndex);
 end;
 
 // -----------------------------------------------------------------------------
