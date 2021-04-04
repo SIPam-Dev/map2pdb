@@ -1778,8 +1778,7 @@ begin
   FNamedStreams.Clear;
   FLayout := Default(TPDBFFileLayout);
 
-  if (Logging) then
-    Log('Constructing PDB file');
+  Log('Constructing PDB file');
 
   FFiler := TMSFFile.Create(Stream, FBlockSize);
   try
@@ -1792,15 +1791,13 @@ begin
     try
 
       // Populate string list with all source file names. The list is emitted in WritePDBStrings.
-      if (Logging) then
-        Log('- Collecting source file names');
+      Log('- Collecting source file names');
       PopulateStringList;
 
       // Write the Module Symbols stream.
       // We need to write this before the DBI Info stream because the DBI Module Info Substream
       // contains values that are calculated when we write the symbols.
-      if (Logging) then
-        Log('- Module streams');
+      Log('- Module streams');
       WriteDBIModuleSymbols;
 
 
@@ -1808,8 +1805,7 @@ begin
       // The indices and offsets of the string list must be stable before the DBI Module Info Substream
       // (WriteDBIStream->EmitDBISubstreamModules) and the Module info streams (WriteDBIModuleSymbols) are written
       // as they emit these values.
-      if (Logging) then
-        Log('- Strings stream');
+      Log('- Strings stream');
       WritePDBStrings;
 // FIXME: MSF corrupts when an empty /LinkInfo stream is added
 //!!!      FNamedStreams.Add('/LinkInfo', FFiler.AllocateStream);
@@ -1817,32 +1813,27 @@ begin
 
       // Write the PDB info stream
       // This persists the FNamedStreams list and therefore marks it FNamedStreams read-only.
-      if (Logging) then
-        Log('- PDB Info stream');
+      Log('- PDB Info stream');
       FLayout.StreamPDB := WritePDBInfoStream;
 
 
       // Write the TPI stream
-      if (Logging) then
-        Log('- TPI stream');
+      Log('- TPI stream');
       FLayout.StreamTPI := WriteTPIStream;
 
 
       // Write the Symbols (DBI), Globals (DBI) and Publics (DBI) streams - they must be writte before the DBI stream
-      if (Logging) then
-        Log('- Symbols stream');
+      Log('- Symbols stream');
       WriteSymbols;
 
 
       // Write the DBI stream
-      if (Logging) then
-        Log('- DBI stream');
+      Log('- DBI stream');
       FLayout.StreamDBI := WriteDBIStream;
 
 
       // Write the IPI stream
-      if (Logging) then
-        Log('- IPI stream');
+      Log('- IPI stream');
       FLayout.StreamIPI := WriteIPIStream;
 
 
@@ -1851,8 +1842,7 @@ begin
     end;
 
     // Commit the MSF transaction
-    if (Logging) then
-      Log('- Finalizing PDB file');
+    Log('- Finalizing PDB file');
     FFiler.EndFile;
 
   finally

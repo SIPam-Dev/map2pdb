@@ -25,15 +25,26 @@ procedure PatchPE(const Filename, PdbFilename: string; Logging: boolean = False)
 
   procedure Log(const Msg: string);
   begin
+    if (Logging) then
+      Writeln(Msg);
+  end;
+
+  procedure Error(const Msg: string); overload;
+  begin
     Writeln(Msg);
+    Halt(1);
+  end;
+
+  procedure Error(const Fmt: string; const Args: array of const); overload;
+  begin
+    Error(Format(Fmt, Args));
   end;
 
 type
   TByteArray = array[0..MaxInt-1] of Byte;
   PByteArray = ^TByteArray;
 begin
-  if (Logging) then
-    Log('Patching PE file');
+  Log('Patching PE file');
 
   var Stream := TFileStream.Create(Filename, fmOpenReadWrite or fmShareExclusive);
   try
@@ -44,7 +55,7 @@ begin
     Stream.ReadBuffer(DosHeader, SizeOf(DosHeader));
 
     if (DosHeader.e_magic <> IMAGE_DOS_SIGNATURE) then
-      raise Exception.Create('Invalid DOS file signature');
+      Error('Invalid DOS file signature');
 
     (*
     ** NT header
@@ -56,18 +67,18 @@ begin
     Stream.ReadBuffer(NtHeaders32, SizeOf(NtHeaders32));
 
     if (NtHeaders32.OptionalHeader.Magic = IMAGE_NT_OPTIONAL_HDR64_MAGIC) then
-      raise Exception.Create('PE64 image not supported yet');
+      Error('PE64 image not supported yet');
 
     if (NtHeaders32.OptionalHeader.Magic <> IMAGE_NT_OPTIONAL_HDR32_MAGIC) then
-      raise Exception.Create('Invalid PE32 image');
+      Error('Invalid PE32 image');
 
     var DebugRVA := NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress;
 
     if (DebugRVA = 0) then
-      raise Exception.Create('Image does not contain a debug directory address - please link with debug info enabled');
+      Error('Image does not contain a debug directory address - please link with debug info enabled');
 
     if (NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size = 0) then
-      raise Exception.Create('Image does not contain a debug directory - please link with debug info enabled');
+      Error('Image does not contain a debug directory - please link with debug info enabled');
 
     var DebugOffset := 0;
 
@@ -85,7 +96,7 @@ begin
     end;
 
     if (DebugOffset = 0) then
-      raise Exception.Create('Failed to locate debug directory section - please link with debug info enabled');
+      Error('Failed to locate debug directory section - please link with debug info enabled');
 
     (*
     ** Debug directory
@@ -103,7 +114,7 @@ begin
     Stream.ReadBuffer(DebugDirectory, SizeOf(DebugDirectory));
 
     if (DebugDirectory.SizeOfData < DebugSize) then
-      raise Exception.CreateFmt('Size of debug data too small: %d bytes available, %d required', [DebugDirectory.SizeOfData, DebugSize]);
+      Error('Size of debug data too small: %d bytes available, %d required', [DebugDirectory.SizeOfData, DebugSize]);
 
     (*
     ** Debug data
@@ -115,8 +126,7 @@ begin
       // Write updated debug directory
       Stream.Seek(DebugOffset, soBeginning);
       Stream.WriteBuffer(DebugDirectory, SizeOf(DebugDirectory));
-      if (Logging) then
-        Log('- Type of debug directory entry has been set to IMAGE_DEBUG_TYPE_CODEVIEW.');
+      Log('- Type of debug directory entry has been set to IMAGE_DEBUG_TYPE_CODEVIEW.');
     end;
 
     // Populate and write a CV_INFO_PDB70 block
@@ -133,8 +143,7 @@ begin
       // Write updated debug data
       Stream.Seek(DebugDirectory.PointerToRawData, soBeginning);
       Stream.WriteBuffer(CodeViewInfoPDB^, DebugSize);
-      if (Logging) then
-        Log('- PDB file name has been stored in debug data.');
+      Log('- PDB file name has been stored in debug data.');
 
     finally
       FreeMem(CodeViewInfoPDB);
@@ -143,20 +152,17 @@ begin
     if (NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size < SizeOf(TImageDebugDirectory)) then
     begin
       NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size := SizeOf(TImageDebugDirectory);
-      if (Logging) then
-        Log('- Debug directory size has been reset to correct value.');
+      Log('- Debug directory size has been reset to correct value.');
     end;
 
     // Clear the checksum so file doesn't appear corrupt
     NtHeaders32.OptionalHeader.CheckSum := 0;
-    if (Logging) then
-        Log('- Header checksum has been cleared.');
+    Log('- Header checksum has been cleared.');
 
     // Write updated NT header
     Stream.Seek(DosHeader._lfanew, soBeginning);
     Stream.WriteBuffer(NtHeaders32, SizeOf(NtHeaders32));
-    if (Logging) then
-        Log('- PE file has been updated.');
+    Log('- PE file has been updated.');
   finally
     Stream.Free;
   end;

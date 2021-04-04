@@ -121,45 +121,6 @@ begin
   Result := (FHasLineBuffer) or (FHasPeekBuffer) or (not FReader.EndOfStream);
 end;
 
-function HexToNibble(c: char): Cardinal;
-begin
-  case c of
-    '0'..'9': Result := Ord(c)-Ord('0');
-    'a'..'f': Result := 10 + Ord(c)-Ord('a');
-    'A'..'F': Result := 10 + Ord(c)-Ord('A');
-  else
-    Result := $FF;
-  end;
-end;
-
-function HexToInt16(const s: string; Offset: integer): Word;
-begin
-  Result := 0;
-  for var i := 1 to SizeOf(Result)*2 do
-    if (i+Offset <= Length(s)) then
-    begin
-      var Nibble := HexToNibble(s[i+Offset]);
-      if (Nibble = $FF) then
-        raise Exception.CreateFmt('Invalid hex number: "%s"', [Copy(s, 1+Offset, 4)]);
-      Result := (Result SHL 4) or Nibble
-    end else
-      raise Exception.CreateFmt('Invalid hex number: "%s"', [Copy(s, 1+Offset, 4)]);
-end;
-
-function HexToInt32(const s: string; Offset: integer): Cardinal;
-begin
-  Result := 0;
-  for var i := 1 to SizeOf(Result)*2 do
-    if (i+Offset <= Length(s)) then
-    begin
-      var Nibble := HexToNibble(s[i+Offset]);
-      if (Nibble = $FF) then
-        raise Exception.CreateFmt('Invalid hex number: "%s"', [Copy(s, 1+Offset, 8)]);
-      Result := (Result SHL 4) or Nibble
-    end else
-      raise Exception.CreateFmt('Invalid hex number: "%s"', [Copy(s, 1+Offset, 8)]);
-end;
-
 { TDebugInfoMapReader }
 
 function TDebugInfoMapReader.Demangle(Module: TDebugInfoModule; const Name: string): string;
@@ -224,11 +185,53 @@ begin
 end;
 
 procedure TDebugInfoMapReader.LoadFromStream(Stream: TStream; DebugInfo: TDebugInfo);
-begin
-  if (Logging) then
-    Log('Reading MAP file');
+var
+  Reader: TLineReader;
 
-  var Reader := TLineReader.Create(Stream);
+  function HexToNibble(c: char): Cardinal;
+  begin
+    case c of
+      '0'..'9': Result := Ord(c)-Ord('0');
+      'a'..'f': Result := 10 + Ord(c)-Ord('a');
+      'A'..'F': Result := 10 + Ord(c)-Ord('A');
+    else
+      Result := $FF;
+    end;
+  end;
+
+  function HexToInt16(const s: string; Offset: integer): Word;
+  begin
+    Result := 0;
+    for var i := 1 to SizeOf(Result)*2 do
+      if (i+Offset <= Length(s)) then
+      begin
+        var Nibble := HexToNibble(s[i+Offset]);
+        if (Nibble = $FF) then
+          Error(Reader.LineNumber, 'Invalid hex number: "%s"', [Copy(s, 1+Offset, 4)]);
+
+        Result := (Result SHL 4) or Nibble
+      end else
+        Error(Reader.LineNumber, 'Invalid hex number: "%s"', [Copy(s, 1+Offset, 4)]);
+  end;
+
+  function HexToInt32(const s: string; Offset: integer): Cardinal;
+  begin
+    Result := 0;
+    for var i := 1 to SizeOf(Result)*2 do
+      if (i+Offset <= Length(s)) then
+      begin
+        var Nibble := HexToNibble(s[i+Offset]);
+        if (Nibble = $FF) then
+          Error(Reader.LineNumber, 'Invalid hex number: "%s"', [Copy(s, 1+Offset, 8)]);
+        Result := (Result SHL 4) or Nibble
+      end else
+        Error(Reader.LineNumber, 'Invalid hex number: "%s"', [Copy(s, 1+Offset, 8)]);
+  end;
+
+begin
+  Log('Reading MAP file');
+
+  Reader := TLineReader.Create(Stream);
   try
 
     (*
@@ -256,28 +259,29 @@ begin
       n := Pos(' ', Reader.LineBuffer, n+1);
       var Size: TDebugInfoOffset := HexToInt32(Reader.LineBuffer, n);
 
-      // Ignore empty segments (e.g. "0006:00400000 00000000H .pdata                  PDATA")
+      n := Pos('.', Reader.LineBuffer, n+1);
+      var n2 := Pos(' ', Reader.LineBuffer, n+1);
+      var Name := Copy(Reader.LineBuffer, n, n2-n);
+      if (Name.IsEmpty) then
+        Error(Reader.LineNumber, 'Invalid segment name'#13#10'%s', [Reader.LineBuffer]);
 
-      if (Size > 0) then
-      begin
+      var ClassName := Copy(Reader.LineBuffer, n2+1, MaxInt).Trim;
+      if (ClassName.IsEmpty) then
+        Error(Reader.LineNumber, 'Invalid segment class name'#13#10'%s', [Reader.LineBuffer]);
 
-        n := Pos('.', Reader.LineBuffer, n+1);
-        var n2 := Pos(' ', Reader.LineBuffer, n+1);
-        var Name := Copy(Reader.LineBuffer, n, n2-n);
-        if (Name.IsEmpty) then
-          raise Exception.CreateFmt('[%d] Invalid segment name'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+      var Segment := DebugInfo.Segments.Add(SegmentID, ClassName, Name);
 
-        var ClassName := Copy(Reader.LineBuffer, n2+1, MaxInt).Trim;
-        if (ClassName.IsEmpty) then
-          raise Exception.CreateFmt('[%d] Invalid segment class name'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+      Segment.Offset := Offset;
+      Segment.Size := Size;
 
-        var Segment := DebugInfo.Segments.Add(SegmentID, ClassName, Name);
-
-        Segment.Offset := Offset;
-        Segment.Size := Size;
-
-      end;
-        //raise Exception.CreateFmt('[%d] Invalid segment size (%s)', [Reader.LineNumber, Reader.LineBuffer]);
+      // We previously ignored empty segments. E.g.:
+      //   "0005:00000000 00000000H .tls                    TLS"
+      //   "0006:00400000 00000000H .pdata                  PDATA"
+      // but we need to allow them so symbols or lines referencing the segments doesn't cause errors. E.g.:
+      //   "0005:00000000       OtlCommon.Utils.LastThreadName"
+      //   "0005:00000100       SysInit.TlsLast"
+      if (Size = 0) then
+        Warning(Reader.LineNumber, 'Empty segment: %s [%.4X:%.8X]', [Name, SegmentID, Segment.Offset]);
 
       Reader.NextLine;
     end;
@@ -305,7 +309,7 @@ begin
       n := Pos('M=', Reader.LineBuffer);
       var Name := Copy(Reader.LineBuffer, n+2, Pos(' ', Reader.LineBuffer, n+2)-n-2);
       if (Name.IsEmpty) then
-        raise Exception.CreateFmt('[%d] Invalid module name'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Invalid module name'#13#10'%s', [Reader.LineBuffer]);
 
       var SegmentID: Cardinal := HexToInt16(Address, 0);
 
@@ -315,22 +319,22 @@ begin
       n := Pos(' ', Address);
       var Size: TDebugInfoOffset := HexToInt32(Address, n);
       if (Size = 0) then
-        raise Exception.CreateFmt('[%d] Invalid module size'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Invalid module size'#13#10'%s', [Reader.LineBuffer]);
 
       var Segment := DebugInfo.Segments.FindByIndex(SegmentID);
       if (Segment = nil) then
-        raise Exception.CreateFmt('[%d] Unknown segment'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Unknown segment index: %.4X'#13#10'%s', [SegmentID, Reader.LineBuffer]);
 
       // Look for existing module
       var Module := DebugInfo.Modules.FindOverlap(Segment, Offset, Size);
       if (Module <> nil) then
-        raise Exception.CreateFmt('[%d] Modules overlap: %s, %s'#13'%s', [Reader.LineNumber, Module.Name, Name, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Modules overlap: %s, %s'#13#10'%s', [Module.Name, Name, Reader.LineBuffer]);
 
       // Add new module
       if (Offset + Size <= Segment.Size) then
         DebugInfo.Modules.Add(Name, Segment, Offset, Size)
       else
-        Warning(Reader.LineNumber, '[%d] Module out of segment bounds - ignored: %s', [Reader.LineNumber, Name]);
+        Warning(Reader.LineNumber, 'Module exceed segment bounds - ignored: %s [%.4X:%.8X+%d]', [Name, SegmentID, Offset, Size]);
 
       Reader.NextLine;
     end;
@@ -357,7 +361,7 @@ begin
 
       var Name := Copy(Reader.LineBuffer, n+1, MaxInt).TrimLeft;
       if (Name.IsEmpty) then
-        raise Exception.CreateFmt('[%d] Invalid symbol name'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Invalid symbol name'#13#10'%s', [Reader.LineBuffer]);
 
       var SegmentID: Cardinal := HexToInt16(Address, 0);
 
@@ -366,7 +370,7 @@ begin
 
       var Segment := DebugInfo.Segments.FindByIndex(SegmentID);
       if (Segment = nil) then
-        raise Exception.CreateFmt('[%d] Unknown segment'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Unknown segment index: %.4X'#13#10'%s', [SegmentID, Reader.LineBuffer]);
 
       var Module := DebugInfo.Modules.FindByOffset(Segment, Offset);
 
@@ -382,11 +386,11 @@ begin
 
           var Symbol := Module.Symbols.Add(Name, Offset);
           if (Symbol = nil) then
-            Warning(Reader.LineNumber, 'Symbol with duplicate offset ignored: %.4X:%.8X %s', [SegmentID, Offset, Name]);
+            Warning(Reader.LineNumber, 'Symbol with duplicate offset ignored: [%.4X:%.8X] %s', [SegmentID, Offset, Name]);
         end;
 
       end else
-        Warning(Reader.LineNumber, 'Failed to resolve symbol to module: %.4X:%.8X %s', [SegmentID, Offset, Name]);
+        Warning(Reader.LineNumber, 'Failed to resolve symbol to module: [%.4X:%.8X] %s', [SegmentID, Offset, Name]);
 
       Reader.NextLine;
     end;
@@ -398,7 +402,7 @@ begin
 
       for var Symbol in Module.Symbols do
         if (Symbol.Size = 0) then
-          Warning('Zero size symbol will be ignored: %s.%s', [Module.Name, Symbol.Name]);
+          Warning('Zero size symbol: %s.%s', [Module.Name, Symbol.Name]);
     end;
 
 
@@ -430,17 +434,17 @@ begin
 
       var n := Pos('(', Reader.LineBuffer);
       if (n = 0) then
-        raise Exception.CreateFmt('[%d] Source file start marker "(" not found'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Source file start marker "(" not found'#13#10'%s', [Reader.LineBuffer]);
       var ModuleName := Copy(Reader.LineBuffer, Length(sPrefix)+1, n-1-Length(sPrefix));
 
       var n2 := Pos(')', Reader.LineBuffer, n+1);
       if (n2 = 0) then
-        raise Exception.CreateFmt('[%d] Source file end marker ")" not found'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Source file end marker ")" not found'#13#10'%s', [Reader.LineBuffer]);
       var Filename := Copy(Reader.LineBuffer, n+1, n2-n-1);
 
       n := Pos('segment', Reader.LineBuffer, n2+1);
       if (n = 0) then
-        raise Exception.CreateFmt('[%d] Source file segment marker "segment" not found'#13'%s', [Reader.LineNumber, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Source file segment marker "segment" not found'#13#10'%s', [Reader.LineBuffer]);
       Inc(n, 7);
       while (Reader.LineBuffer[n] = ' ') do
         Inc(n);
@@ -448,7 +452,7 @@ begin
       var SegmentName := Copy(Reader.LineBuffer, n, MaxInt);
       var Segment := DebugInfo.Segments.FindByName(SegmentName);
       if (Segment = nil) then
-        raise Exception.CreateFmt('[%d] Unknown segment name: %s'#13'%s', [Reader.LineNumber, SegmentName, Reader.LineBuffer]);
+        Error(Reader.LineNumber, 'Unknown segment name: %s'#13#10'%s', [SegmentName, Reader.LineBuffer]);
 
       var Module := DebugInfo.Modules.FindByName(ModuleName, Segment);
       if (Module <> nil) then
@@ -471,10 +475,12 @@ begin
             var s := Copy(Reader.LineBuffer, Ofs, n-Ofs);
             var LineNumber: integer;
             if (not integer.TryParse(s, LineNumber)) then
-              raise Exception.CreateFmt('[%d] Invalid line number: %s'#13'%s', [Reader.LineNumber, s, Reader.LineBuffer]);
+              Error(Reader.LineNumber, 'Invalid line number: %s'#13#10'%s', [s, Reader.LineBuffer]);
 
-            // Get segment type (we already have that info from the header)
-            // var Segment: Cardinal := HexToInt16(Reader.LineBuffer, n);
+            // Get segment index (we already have that info from the header)
+            var SegmentID: Cardinal := HexToInt16(Reader.LineBuffer, n);
+            if (SegmentID <> Segment.Index) then
+              Error(Reader.LineNumber, 'Segment mismatch. Module segment:%d (%s), Line segment:%d'#13#10'%s', [Segment.Index, Segment.Name, SegmentID, Reader.LineBuffer]);
             Inc(n, 4+1);
 
             // Get offset
@@ -485,14 +491,15 @@ begin
             if (Offset <> 0) then
             begin
               if (Offset < Module.Offset) then
-                raise Exception.CreateFmt('[%d] Line number offset out of range for module: Offset=%.8X, Module=%s'#13'%s', [Reader.LineNumber, Offset, Module.Name, Reader.LineBuffer]);
-
+              begin
+                Warning(Reader.LineNumber, 'Line number offset out of range for module. Offset:%.8X, Module:%s [%.8X - %.8X]', [Offset, Module.Name, Module.Offset, Module.Offset+Module.Size]);
+              end else
               if (Offset < Module.Offset + Module.Size) then
               begin
                 // Validate module
                 var ModuleByOffset := DebugInfo.Modules.FindByOffset(Module.Segment, Offset);
                 if (Module <> ModuleByOffset) then
-                  raise Exception.CreateFmt('[%d] Module mismatch: Offset=%.8X, Module=%s, Found module:%s'#13'%s', [Reader.LineNumber, Offset, Module.Name, ModuleByOffset.Name, Reader.LineBuffer]);
+                  Error(Reader.LineNumber, 'Module mismatch: Offset=%.8X, Module=%s, Found module:%s'#13#10'%s', [Offset, Module.Name, ModuleByOffset.Name, Reader.LineBuffer]);
 
                 // Offset is relative to segment. Make it relative to module
                 Dec(Offset, Module.Offset);
@@ -504,9 +511,10 @@ begin
                 // This is typically the last "end." of the unit. The offset corresponds to the start of the next module.
 
                 // We can get *a lot* of these so I've disabled output of them for now
-                // Warning(Reader.LineNumber, '[%d] Line number offset out of range for module: Offset=%.8X, Module=%s', [Offset, Module.Name]);
+                // Warning(Reader.LineNumber, 'Line number offset out of range for module: Offset=%.8X, Module=%s', [Offset, Module.Name]);
               end;
-            end;
+            end else
+              Warning(Reader.LineNumber, 'Line number with zero offset ignored. Module:%s, Segment:%.4X, Source:%s, Line:%d', [Module.Name, SegmentID, SourceFile.Filename, LineNumber]);
 
             while (n <= Reader.LineBuffer.Length) and (Reader.LineBuffer[n] = ' ') do
               Inc(n);
@@ -523,7 +531,7 @@ begin
         // Line numbers for System.RTLConsts(System.RTLConsts.pas) segment .text
         //   611 0001:00000000
 
-        // raise Exception.CreateFmt('[%d] Module not found: %s'#13'%s', [Reader.LineNumber, ModuleName, Reader.LineBuffer]);
+        // Error(Reader.LineNumber, 'Module not found: %s'#13#10'%s', [ModuleName, Reader.LineBuffer]);
 
         // Skip empty lines and exit if no more lines
         if (Reader.NextLine(True).IsEmpty) then
@@ -540,7 +548,7 @@ begin
     end;
 
   finally
-    FreeAndNil(Reader);
+    Reader.Free;
   end;
 end;
 

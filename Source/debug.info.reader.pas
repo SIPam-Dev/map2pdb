@@ -25,6 +25,10 @@ type
     procedure Warning(const Fmt: string; const Args: array of const); overload;
     procedure Warning(LineNumber: integer; const Msg: string); overload;
     procedure Warning(LineNumber: integer; const Fmt: string; const Args: array of const); overload;
+    procedure Error(const Msg: string); overload;
+    procedure Error(const Fmt: string; const Args: array of const); overload;
+    procedure Error(LineNumber: integer; const Msg: string); overload;
+    procedure Error(LineNumber: integer; const Fmt: string; const Args: array of const); overload;
   public
     constructor Create; virtual;
 
@@ -57,7 +61,7 @@ end;
 
 procedure TDebugInfoReader.Warning(const Msg: string);
 begin
-  WriteLn(Msg);
+  WriteLn('Warning: '+Msg);
 end;
 
 procedure TDebugInfoReader.Warning(const Fmt: string; const Args: array of const);
@@ -73,6 +77,30 @@ end;
 procedure TDebugInfoReader.Warning(LineNumber: integer; const Fmt: string; const Args: array of const);
 begin
   Warning(LineNumber, Format(Fmt, Args));
+end;
+
+procedure TDebugInfoReader.Error(const Msg: string);
+begin
+  WriteLn('Error:   '+Msg);
+  Halt(1);
+end;
+
+procedure TDebugInfoReader.Error(const Fmt: string; const Args: array of const);
+begin
+  Error(Format(Fmt, Args));
+  Halt(1);
+end;
+
+procedure TDebugInfoReader.Error(LineNumber: integer; const Msg: string);
+begin
+  Error('[%5d] %s', [LineNumber, Msg]);
+  Halt(1);
+end;
+
+procedure TDebugInfoReader.Error(LineNumber: integer; const Fmt: string; const Args: array of const);
+begin
+  Error(LineNumber, Format(Fmt, Args));
+  Halt(1);
 end;
 
 procedure TDebugInfoReader.LoadFromFile(const Filename: string; DebugInfo: TDebugInfo);
