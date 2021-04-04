@@ -57,33 +57,75 @@ begin
     if (DosHeader.e_magic <> IMAGE_DOS_SIGNATURE) then
       Error('Invalid DOS file signature');
 
+
     (*
     ** NT header
     *)
     // The DOS header gives us the offset to the NT header
     Stream.Seek(DosHeader._lfanew, soBeginning);
 
-    var NtHeaders32: TImageNtHeaders32;
-    Stream.ReadBuffer(NtHeaders32, SizeOf(NtHeaders32));
+    var Signature: DWORD;
+    var FileHeader: TImageFileHeader;
+    Stream.ReadBuffer(Signature, SizeOf(Signature));
+    Stream.ReadBuffer(FileHeader, SizeOf(FileHeader));
 
-    if (NtHeaders32.OptionalHeader.Magic = IMAGE_NT_OPTIONAL_HDR64_MAGIC) then
-      Error('PE64 image not supported yet');
 
-    if (NtHeaders32.OptionalHeader.Magic <> IMAGE_NT_OPTIONAL_HDR32_MAGIC) then
-      Error('Invalid PE32 image');
+    // After the Signature and FileHeader follows a structure that differs
+    // between PE32 and PE32+.
+    // The first Word of the structure tells us what kind it is: Either
+    // TImageOptionalHeader32 or TImageOptionalHeader64.
+    var OptionalHeader32: TImageOptionalHeader32;
+    var OptionalHeader64: TImageOptionalHeader64;
+    Stream.ReadBuffer(OptionalHeader32.Magic, SizeOf(OptionalHeader32.Magic));
 
-    var DebugRVA := NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress;
+    var PE32Plus := False;
+
+    case OptionalHeader32.Magic of
+      IMAGE_NT_OPTIONAL_HDR32_MAGIC:
+        begin
+          Log('- PE32 image (32-bit)');
+          PE32Plus := False;
+          Stream.ReadBuffer(OptionalHeader32.MajorLinkerVersion, SizeOf(TImageOptionalHeader32)-SizeOf(Word));
+        end;
+
+      IMAGE_NT_OPTIONAL_HDR64_MAGIC:
+        begin
+          Log('- PE32+ image (64-bit)');
+          PE32Plus := True;
+          OptionalHeader64.Magic := OptionalHeader32.Magic;
+          Stream.ReadBuffer(OptionalHeader64.MajorLinkerVersion, SizeOf(TImageOptionalHeader64)-SizeOf(Word));
+        end;
+    else
+      Error('Invalid or unsupprted PE image type: %.4X', [OptionalHeader32.Magic]);
+    end;
+
+    var DebugRVA: Cardinal;
+    if (PE32Plus) then
+      DebugRVA := OptionalHeader64.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress
+    else
+      DebugRVA := OptionalHeader32.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress;
 
     if (DebugRVA = 0) then
       Error('Image does not contain a debug directory address - please link with debug info enabled');
 
-    if (NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size = 0) then
-      Error('Image does not contain a debug directory - please link with debug info enabled');
+    if (PE32Plus) then
+    begin
+      if (OptionalHeader64.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size = 0) then
+        Error('Image does not contain a debug directory - please link with debug info enabled');
+    end else
+    begin
+      if (OptionalHeader32.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size = 0) then
+        Error('Image does not contain a debug directory - please link with debug info enabled');
+    end;
 
+
+    (*
+    ** Section table
+    *)
     var DebugOffset := 0;
 
     // Read through section headers to locate the debug section header
-    for var i := 0 to NtHeaders32.FileHeader.NumberOfSections-1 do
+    for var i := 0 to FileHeader.NumberOfSections-1 do
     begin
       var SectionHeader: TImageSectionHeader;
       Stream.ReadBuffer(SectionHeader, SizeOf(SectionHeader));
@@ -97,6 +139,7 @@ begin
 
     if (DebugOffset = 0) then
       Error('Failed to locate debug directory section - please link with debug info enabled');
+
 
     (*
     ** Debug directory
@@ -115,6 +158,7 @@ begin
 
     if (DebugDirectory.SizeOfData < DebugSize) then
       Error('Size of debug data too small: %d bytes available, %d required', [DebugDirectory.SizeOfData, DebugSize]);
+
 
     (*
     ** Debug data
@@ -149,19 +193,39 @@ begin
       FreeMem(CodeViewInfoPDB);
     end;
 
-    if (NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size < SizeOf(TImageDebugDirectory)) then
+
+    if (PE32Plus) then
     begin
-      NtHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size := SizeOf(TImageDebugDirectory);
-      Log('- Debug directory size has been reset to correct value.');
+      if (OptionalHeader64.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size < SizeOf(TImageDebugDirectory)) then
+      begin
+        OptionalHeader64.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size := SizeOf(TImageDebugDirectory);
+        Log('- Debug directory size has been reset to correct value.');
+      end;
+
+      // Clear the checksum so file doesn't appear corrupt
+      OptionalHeader64.CheckSum := 0;
+      Log('- Header checksum has been cleared.');
+    end else
+    begin
+      if (OptionalHeader32.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size < SizeOf(TImageDebugDirectory)) then
+      begin
+        OptionalHeader32.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].Size := SizeOf(TImageDebugDirectory);
+        Log('- Debug directory size has been reset to correct value.');
+      end;
+
+      // Clear the checksum so file doesn't appear corrupt
+      OptionalHeader32.CheckSum := 0;
+      Log('- Header checksum has been cleared.');
     end;
 
-    // Clear the checksum so file doesn't appear corrupt
-    NtHeaders32.OptionalHeader.CheckSum := 0;
-    Log('- Header checksum has been cleared.');
 
     // Write updated NT header
-    Stream.Seek(DosHeader._lfanew, soBeginning);
-    Stream.WriteBuffer(NtHeaders32, SizeOf(NtHeaders32));
+    Stream.Seek(DosHeader._lfanew + SizeOf(Signature) + SizeOf(FileHeader), soBeginning);
+    if (PE32Plus) then
+      Stream.WriteBuffer(OptionalHeader64, SizeOf(TImageOptionalHeader64))
+    else
+      Stream.WriteBuffer(OptionalHeader32, SizeOf(TImageOptionalHeader32));
+
     Log('- PE file has been updated.');
   finally
     Stream.Free;
