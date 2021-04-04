@@ -21,6 +21,8 @@ type
     FLogging: boolean;
   protected
     procedure Log(const Msg: string); virtual;
+    procedure Warning(const Msg: string);
+    procedure Error(const Msg: string);
   public
     constructor Create; virtual;
 
@@ -46,6 +48,17 @@ procedure TDebugInfoWriter.Log(const Msg: string);
 begin
   if (FLogging) then
     WriteLn(Msg);
+end;
+
+procedure TDebugInfoWriter.Warning(const Msg: string);
+begin
+  WriteLn('Warning: ' + Msg);
+end;
+
+procedure TDebugInfoWriter.Error(const Msg: string);
+begin
+  WriteLn('Error:   ' + Msg);
+  Halt(1);
 end;
 
 procedure TDebugInfoWriter.SaveToFile(const Filename: string; DebugInfo: TDebugInfo);

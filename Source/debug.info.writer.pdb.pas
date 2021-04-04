@@ -1848,6 +1848,9 @@ begin
   finally
     FreeAndNil(FFiler);
   end;
+
+  if (Stream.Size > 4096*FBlockSize) then
+    Warning(Format('The PDB file is too large: %.1n Mb. This version only supports PDB files no larger than %.1n Mb', [Stream.Size / 1024 / 1024, 4096 * FBlockSize / 1024 / 1024]));
 end;
 
 
