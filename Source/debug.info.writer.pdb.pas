@@ -449,7 +449,7 @@ end;
 
 function TDebugInfoPdbWriter.EmitTPIStream(Writer: TBinaryBlockWriter): Cardinal;
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   var TPIStreamHeader := Default(TTPIStreamHeader);
   TPIStreamHeader.Version := Ord(TPIStreamVersion.V80);
@@ -464,7 +464,7 @@ begin
 
   Writer.Write<TTPIStreamHeader>(TPIStreamHeader);
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 
@@ -512,7 +512,7 @@ end;
 
 function TDebugInfoPdbWriter.EmitDBISubstreamModules(Writer: TBinaryBlockWriter): Cardinal;
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   var ModuleIndex := 0;
   for var Module in FDebugInfo.Modules do
@@ -570,7 +570,7 @@ begin
   // Align to 4 bytes
   Writer.PadToAligment(4);
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitDBISubstreamSectionContributions(Writer: TBinaryBlockWriter): Cardinal;
@@ -586,7 +586,7 @@ function TDebugInfoPdbWriter.EmitDBISubstreamSectionContributions(Writer: TBinar
   end;
 
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   Writer.Write(Cardinal(Ord(SectionContrSubstreamVersion.Ver60)));
 
@@ -599,7 +599,7 @@ begin
 
   EmitDBISectionContribution(FLinkerModule, ModuleIndex);
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitDBISubstreamSectionMap(Writer: TBinaryBlockWriter): Cardinal;
@@ -622,7 +622,7 @@ function TDebugInfoPdbWriter.EmitDBISubstreamSectionMap(Writer: TBinaryBlockWrit
   end;
 
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   var SectionMapHeader: TSectionMapHeader;
 
@@ -654,12 +654,12 @@ begin
   SectionMapEntry.SectionLength := Cardinal(-1);
   Writer.Write<TSectionMapEntry>(SectionMapEntry);
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitDBISubstreamEC(Writer: TBinaryBlockWriter): Cardinal;
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   var Strings := TStringList.Create;
   try
@@ -672,12 +672,12 @@ begin
     Strings.Free;
   end;
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitDBISubstreamFiles(Writer: TBinaryBlockWriter): Cardinal;
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   var FileInfoSubstream: TFileInfoSubstream;
 
@@ -705,7 +705,7 @@ begin
 
   // In order to get the offset values we first skip the offset array, write the
   // strings while saving the offsets, and then go back and write the offset array.
-  var ArrayPos := Writer.BaseStream.Position;
+  var ArrayBookmark := Writer.SaveBookmark;
 
   // Compute the size of the arrays so we can skip them
   var OffsetCount := 0;
@@ -714,7 +714,7 @@ begin
   var OffsetArraySize := OffsetCount * SizeOf(Cardinal);
 
   // Skip the offset array
-  Writer.BaseStream.Position := Writer.BaseStream.Position + OffsetArraySize;
+  Writer.Position := Writer.Position + OffsetArraySize;
 
 
   // Write the strings and save the offsets along the way
@@ -748,8 +748,7 @@ begin
 
 
     // Go back and write the offset array
-    var SavePos := Writer.BaseStream.Position;
-    Writer.BaseStream.Position := ArrayPos;
+    var SaveBookmark := ArrayBookmark.Restore;
 
     // FileNameOffsets: array[NumSourceFiles] of Cardinal;
     for var Module in FDebugInfo.Modules do
@@ -760,18 +759,18 @@ begin
       end;
 
     // Continue after the string list
-    Writer.BaseStream.Position := SavePos;
+    SaveBookmark.Restore;
 
   finally
     Offsets.Free;
   end;
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitDBISubstreamDebugHeader(Writer: TBinaryBlockWriter): Cardinal;
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   // We don't provide any of the optional debug streams yet
   for var HeaderType := Low(PDBDbgHeaderType) to High(PDBDbgHeaderType) do
@@ -786,7 +785,7 @@ begin
   end;
   *)
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.WriteDBIStream: TMSFStream;
@@ -824,8 +823,8 @@ begin
     DBIStreamHeader.Machine := IMAGE_FILE_MACHINE_AMD64;
 
     // Seek past the header. We will write it once the substreams has been written.
-    var HeaderPos := Result.Writer.BaseStream.Position;
-    Result.Writer.BaseStream.Seek(SizeOf(DBIStreamHeader), soCurrent);
+    var HeaderBookmark := Result.Writer.SaveBookmark;
+    Result.Writer.Seek(SizeOf(DBIStreamHeader), soCurrent);
 
 
     // Emit substreams and store their sizes in the header
@@ -840,12 +839,12 @@ begin
 
 
     // Now that we have the size of all the substreams and the header is complete we can write it
-    var SavePos := Result.Writer.BaseStream.Position;
-    Result.Writer.BaseStream.Position := HeaderPos;
+    var SaveBookmark := HeaderBookmark.Restore;
     Result.Writer.Write<TDBIStreamHeader>(DBIStreamHeader);
-    Result.Writer.BaseStream.Position := SavePos;
 
-    Assert(SavePos - HeaderPos = SizeOf(TDBIStreamHeader) +
+    SaveBookmark.Restore;
+
+    Assert(SaveBookmark.Position - HeaderBookmark.Position = SizeOf(TDBIStreamHeader) +
       DBIStreamHeader.ModInfoSize +
       DBIStreamHeader.SectionContributionSize +
       DBIStreamHeader.SectionMapSize +
@@ -920,7 +919,7 @@ type
 
 function TGSIHashStreamBuilder.Emit(Writer: TBinaryBlockWriter): Cardinal;
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   // Based on GSI1::fWriteHash
   // https://github.com/microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp#L590
@@ -964,7 +963,7 @@ begin
     Assert(Length(BucketOffsets) <= Length(HashRecords));
   end;
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 
   Assert(Result = SizeOf(TGSIHashHeader) + GSIHashHeader.HrSize + GSIHashHeader.NumBuckets);
 end;
@@ -1139,7 +1138,7 @@ var
 
   function EmitPublics(Writer: TBinaryBlockWriter; var Records: TPublicSymArray): Cardinal;
   begin
-    Result := Writer.BaseStream.Position;
+    Result := Writer.Position;
 
     var Offset: Cardinal := 0;
 
@@ -1164,6 +1163,8 @@ var
       Records[Index].SymOffset := Offset; // Save stream offset for use in hash table and address map
       Inc(Offset, Size);
 
+      Assert(Size <= CVMaxRecordLength);
+
       // Write zero termination and alignment padding
       Dec(Size, SizeOf(PublicSym32) + NameSize);
       while (Size > 0) do
@@ -1175,37 +1176,37 @@ var
       Assert(Writer.PadToAligment(4) = 0);
     end;
 
-    Result := Writer.BaseStream.Position - Result;
+    Result := Writer.Position - Result;
     Assert(Result = Offset);
   end;
 
   function EmitGlobals(Writer: TBinaryBlockWriter; Records: TList<TCVSymbol>): Cardinal;
   begin
-    Result := Writer.BaseStream.Position;
+    Result := Writer.Position;
 
     for var Symbol in Records do
     begin
       // TODO : The following is just a guess.
       Writer.Write<TCVTypeRecordHeader>(Symbol.Header);
-      Writer.Write(Symbol.Data);
+      Writer.WriteArray<Byte>(Symbol.Data);
     end;
 
-    Result := Writer.BaseStream.Position - Result;
+    Result := Writer.Position - Result;
   end;
 
   function EmitGlobalsStream(Writer: TBinaryBlockWriter; const HashStreamBuilder: TGSIHashStreamBuilder): Cardinal;
   begin
-    Result := Writer.BaseStream.Position;
+    Result := Writer.Position;
 
     // Emit hash table
     HashStreamBuilder.Emit(Writer);
 
-    Result := Writer.BaseStream.Position - Result;
+    Result := Writer.Position - Result;
   end;
 
   function EmitPublicsStream(Writer: TBinaryBlockWriter; const HashStreamBuilder: TGSIHashStreamBuilder; const Records: TPublicSymArray): Cardinal;
   begin
-    Result := Writer.BaseStream.Position;
+    Result := Writer.Position;
 
     // Emit header
     var Header := Default(TPublicsStreamHeader);
@@ -1274,7 +1275,7 @@ var
     // We do not emit the "thunk map" and "section map" chunks... yet
 
 
-    Result := Writer.BaseStream.Position - Result;
+    Result := Writer.Position - Result;
 
     Assert(Result = SizeOf(TPublicsStreamHeader) + Header.SymHash + Header.AddrMap);
   end;
@@ -1428,6 +1429,7 @@ function TDebugInfoPdbWriter.EmitModuleSymbols(Writer: TBinaryBlockWriter; Modul
     Writer.Write(Section.Name);
 
     Writer.PadToAligment(4);
+    Assert(Symbol.Header.RecordLen+SizeOf(Symbol.Header.RecordLen) <= CVMaxRecordLength);
   end;
 
   procedure EmitLinkerSymbol;
@@ -1460,25 +1462,28 @@ function TDebugInfoPdbWriter.EmitModuleSymbols(Writer: TBinaryBlockWriter; Modul
     Writer.Write(sLinkerName);
 
     Writer.PadToAligment(4);
+    Assert(Symbol.Header.RecordLen+SizeOf(Symbol.Header.RecordLen) <= CVMaxRecordLength);
   end;
 
   procedure EmitObjNameSymbol;
   begin
     var Symbol := Default(TCVTypeObjNameSym);
 
-    Symbol.Header.RecordLen := Alignto(SizeOf(Symbol) + Length(Module.Name) + 1, 4) - SizeOf(Symbol.Header.RecordLen);
+    Symbol.Header.RecordLen := AlignTo(SizeOf(Symbol) + Length(Module.Name) + 1, 4) - SizeOf(Symbol.Header.RecordLen);
     Symbol.Header.RecordKind := Ord(CVSymbolRecordKind.S_OBJNAME);
 
     Writer.Write<TCVTypeObjNameSym>(Symbol);
     Writer.Write(Module.Name);
 
     Writer.PadToAligment(4);
+    Assert(Symbol.Header.RecordLen+SizeOf(Symbol.Header.RecordLen) <= CVMaxRecordLength);
   end;
 
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
-  EmitObjNameSymbol;
+  // Disabled to make the symbol list smaller. Doesn't seem to be needed.
+  // EmitObjNameSymbol;
 
   if (Module is TDebugInfoLinkerModule) then
   begin
@@ -1489,22 +1494,24 @@ begin
     for var Segment in FDebugInfo.Segments do
       EmitSectionSymbol(Segment);
   end else
-//    EmitSectionSymbol(Module.Segment);
-    {nothing yet...};
+    ;
+    // Disabled to make the symbol list smaller. Doesn't seem to be needed.
+    // EmitSectionSymbol(Module.Segment);
+
   // TODO : S_COFFGROUP
   // TODO : Method symbols: S_GPROC32
 
   // Both LLVM & MS aligns the symbol substream
-  Writer.PadToAligment(4);
+  Assert(Writer.PadToAligment(4) = 0);
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitStringTable(Writer: TBinaryBlockWriter; Strings: TStrings): Cardinal;
 const
   EmptyBucket: Cardinal = 0;
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   // Setup hash table with a load factor of 80%
   var Buckets: Cardinal := Ceil(FStringTable.Count * 1.25) + 1; // +1 because we have reserved slot 0
@@ -1572,14 +1579,14 @@ begin
   Writer.Write(Cardinal(Strings.Count)); // Name count
 
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitSubsectionC13SourceFileLines(Writer: TBinaryBlockWriter; Module: TDebugInfoModule): Cardinal;
 
   function EmitSourceLines(SourceFile: TDebugInfoSourceFile; FileIndex: Cardinal): Cardinal;
   begin
-    Result := Writer.BaseStream.Position;
+    Result := Writer.Position;
 
     // Note that for simplicity we emit a header even for source files that have no lines.
     // This means that we can rely on that for any module we will emit Module.SourceFiles.Count
@@ -1615,14 +1622,14 @@ function TDebugInfoPdbWriter.EmitSubsectionC13SourceFileLines(Writer: TBinaryBlo
         Writer.Write<TCVLineNumberEntry>(Line);
       end;
 
-    Result := Writer.BaseStream.Position - Result;
+    Result := Writer.Position - Result;
   end;
 
 begin
   if (Module is TDebugInfoLinkerModule) then
     Exit(0);
 
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
 
   // Module header
@@ -1643,14 +1650,14 @@ begin
     Inc(SourceFileIndex);
   end;
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitSubsectionFileChecksums(Writer: TBinaryBlockWriter; Module: TDebugInfoModule): Cardinal;
 
   function EmitSourceFileChecksum(SourceFile: TDebugInfoSourceFile): Cardinal;
   begin
-    Result := Writer.BaseStream.Position;
+    Result := Writer.Position;
 
     // Find the source filename in the string table so we can get the offset
     // of the name in the stringlist.
@@ -1667,20 +1674,20 @@ function TDebugInfoPdbWriter.EmitSubsectionFileChecksums(Writer: TBinaryBlockWri
 
     Writer.PadToAligment(4);
 
-    Result := Writer.BaseStream.Position - Result;
+    Result := Writer.Position - Result;
   end;
 
 begin
   if (Module is TDebugInfoLinkerModule) then
     Exit(0);
 
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   // Each source file and its lines
   for var SourceFile in Module.SourceFiles do
     EmitSourceFileChecksum(SourceFile);
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 end;
 
 function TDebugInfoPdbWriter.EmitDBIModuleSymbol(Writer: TBinaryBlockWriter; Module: TDebugInfoModule; var ModuleLayout: TModuleLayout): Cardinal;
@@ -1689,20 +1696,20 @@ type
 
   function EmitSubsection(Kind: DebugSubsectionKind; SubSectionEmitter: TSubSectionEmitter): Cardinal;
   begin
-    Result := Writer.BaseStream.Position;
+    Result := Writer.Position;
 
     // Write subsection data then go back and write header
-    var HeaderPos := Writer.BaseStream.Position;
-    Writer.BaseStream.Position := Writer.BaseStream.Position + SizeOf(TCVDebugSubsectionHeader);
+    var HeaderBookmark := Writer.SaveBookmark;
+    Writer.Position := Writer.Position + SizeOf(TCVDebugSubsectionHeader);
 
 
     // Emit subsection
     var DataSize := SubSectionEmitter(Writer, Module);
-    Assert(DataSize = Writer.BaseStream.Position - HeaderPos - SizeOf(TCVDebugSubsectionHeader));
+    Assert(DataSize = Writer.Position - HeaderBookmark.Position - SizeOf(TCVDebugSubsectionHeader));
 
     if (DataSize = 0) then
     begin
-      Writer.BaseStream.Position := HeaderPos;
+      HeaderBookmark.Restore;
       Exit(0);
     end;
 
@@ -1710,22 +1717,20 @@ type
 
 
     // Go back and write subsection header
-    var SavePos := Writer.BaseStream.Position;
-    Writer.BaseStream.Position := HeaderPos;
-
+    var SaveBookmark := HeaderBookmark.Restore;
 
     var SubsectionHeader := Default(TCVDebugSubsectionHeader);
     SubsectionHeader.Kind := Ord(Kind);
     SubsectionHeader.Length := AlignTo(DataSize, 4);
     Writer.Write<TCVDebugSubsectionHeader>(SubsectionHeader);
 
-    Writer.BaseStream.Position := SavePos;
+    SaveBookmark.Restore;
 
-    Result := Writer.BaseStream.Position - Result;
+    Result := Writer.Position - Result;
   end;
 
 begin
-  Result := Writer.BaseStream.Position;
+  Result := Writer.Position;
 
   var ModiStream := Default(TModiStream);
   ModiStream.Signature := Ord(CVSignature.CV_SIGNATURE_C13);
@@ -1746,7 +1751,7 @@ begin
   // TModiStream.GlobalRefs: Not supported so TModiStream.GlobalRefsSize=0
   Writer.Write(Cardinal(0));
 
-  Result := Writer.BaseStream.Position - Result;
+  Result := Writer.Position - Result;
 
   Assert(Result = ModuleLayout.SymByteSize + ModuleLayout.C13ByteSize + SizeOf(Cardinal));
 end;
@@ -1849,8 +1854,7 @@ begin
     FreeAndNil(FFiler);
   end;
 
-  if (Stream.Size > 4096*FBlockSize) then
-    Warning(Format('The PDB file is too large: %.1n Mb. This version only supports PDB files no larger than %.1n Mb', [Stream.Size / 1024 / 1024, 4096 * FBlockSize / 1024 / 1024]));
+  Log(Format('- %.0n blocks written in %.0n intervals', [1.0 * Ceil(Stream.Size / FBlockSize), 1.0 * Ceil(Stream.Size / (FBlockSize*FBlockSize))]));
 end;
 
 

@@ -13,7 +13,11 @@ interface
 
 {$SCOPEDENUMS ON}
 
+{-$define MSF_OFFSET_ROUNDTRIP}  // Define to verify that Logical/Physical offset calculations can roundtrip
+{-$define MSF_POISON}            // Define to write MSF poison padding
+
 uses
+sysutils,
   System.Generics.Collections,
   System.Classes,
   debug.info.pdb;
@@ -27,25 +31,58 @@ uses
 // A binary writer with block knowledge.
 // -----------------------------------------------------------------------------
 type
-  TBinaryBlockWriter = class(TBinaryWriter)
+  TBinaryBlockWriter = class
+  private type
+    TBlockWriterBookmark = record
+    private
+      FWriter: TBinaryBlockWriter;
+      FPosition: Int64; // Physical position
+      function GetPosition: Int64;
+    public
+      // Return a new bookmark for the current position and restore the saved position
+      function Restore: TBlockWriterBookmark;
+      // Logical position
+      property Position: Int64 read GetPosition;
+    end;
   strict private
     FBlockSize: Cardinal;
+    FIntervalSize: Cardinal;
+    FStream: TStream;
   strict private
     function GetBlockCount: Cardinal;
     function GetIntervalIndex: Cardinal;
     function GetBlockIndex: Cardinal;
     procedure SetBlockIndex(const Value: Cardinal);
+    function GetPosition: Int64;
+    procedure SetPosition(const Value: Int64);
+  protected
+    procedure WriteBlockMap;
+{$ifdef MSF_OFFSET_ROUNDTRIP}
+    class function DoLogicalToPhysicalOffset(Offset: Int64; BlockSize: Cardinal): Int64;
+    class function DoPhysicalToLogicalOffset(Offset: Int64; BlockSize: Cardinal): Int64;
+{$endif MSF_OFFSET_ROUNDTRIP}
+    class function LogicalToPhysicalOffset(Offset: Int64; BlockSize: Cardinal): Int64; overload;
+    function LogicalToPhysicalOffset(Offset: Int64): Int64; overload;
+    class function PhysicalToLogicalOffset(Offset: Int64; BlockSize: Cardinal): Int64; overload;
+    function PhysicalToLogicalOffset(Offset: Int64): Int64; overload;
   public
     constructor Create(AStream: TStream; ABlockSize: Cardinal);
 
-    // Writes strings as zero terminated ansi strings and does not write the length byte/word
-    procedure Write(const Str: string); overload; override;
+    // Logical seek
+    function Seek(Offset: Int64; Origin: TSeekOrigin): Int64;
+
+    // Write Bytes, Words and DWords
+    procedure Write(Value: Byte); overload;
+    procedure Write(Value: Word); overload;
+    procedure Write(Value: Cardinal); overload;
+    // Writes strings as zero terminated ansi strings. Does not write the length byte/word
+    procedure Write(const Str: string); overload;
     procedure Write(const Str: AnsiString); overload;
     // Write a record (or any other typed value)
     procedure Write<T>(const Value: T); overload;
     // Write a dynamic array
     procedure WriteArray<T>(const Values: TArray<T>);
-    // Shortcut to BaseStream.WriteBuffer
+    // Write arbitrary untyped data
     procedure WriteBuffer(const Buffer; Count: NativeInt);
 
     function BeginBlock(Poison: boolean = False): Cardinal;
@@ -54,10 +91,14 @@ type
     function PadToAligment(Alignment: Cardinal; Poison: boolean = False): Int64; // Returns amount written
     function WritePadding(DesiredPos: Int64; Poison: boolean = False): Int64; // Returns amount written
 
+    function SaveBookmark: TBlockWriterBookmark;
+
     property BlockSize: Cardinal read FBlockSize;
     property BlockCount: Cardinal read GetBlockCount;
     property BlockIndex: Cardinal read GetBlockIndex write SetBlockIndex;
     property IntervalIndex: Cardinal read GetIntervalIndex;
+    // Logical position
+    property Position: Int64 read GetPosition write SetPosition;
   end;
 
 
@@ -108,7 +149,7 @@ type
     function BeginStream(Poison: boolean = False): Cardinal;
 
     // Closes the stream.
-    // Returns the size of data writte to the stream (same as the Length property).
+    // Returns the size of data written to the stream (same as the Length property).
     function EndStream: Cardinal;
 
     // Mark the stream in-use.
@@ -122,12 +163,12 @@ type
     // Stream index
     property Index: TMSFStreamIndex read GetIndex;
 
-    // Start byte offset within MSF file
+    // Logical start byte offset within MSF file
     property Offset: Int64 read FOffset;
-    // Start MSF block index
-    property BlockIndex: Cardinal read FBlockIndex;
-    // Length of stream in bytes
+    // Logical length of stream in bytes
     property Length: Cardinal read FLength;
+    // Physical start MSF block index
+    property BlockIndex: Cardinal read FBlockIndex;
 
     // IsFixed: True if stream is one of the fixed streams
     property IsFixed: boolean read GetIsFixed;
@@ -158,7 +199,6 @@ type
     FNextStreamIndex: TMSFStreamIndex;
   strict private
     procedure WriteSuperBlock(IndexStream, DirectoryStream: TMSFStream);
-    procedure WriteBlockMap;
     procedure WriteStreamBlockList(Writer: TBinaryBlockWriter; Stream: TMSFStream);
     procedure WriteDirectoryIndex(IndexStream, DirectoryStream: TMSFStream);
     procedure WriteDirectory(DirectoryStream: TMSFStream);
@@ -248,10 +288,10 @@ begin
 
 
   // Write the two Free Block Maps (FBM). Block #1 and #2
-  WriteBlockMap;
+  FWriter.WriteBlockMap;
   Assert(FWriter.BlockIndex = 2);
 
-  WriteBlockMap;
+  FWriter.WriteBlockMap;
   Assert(FWriter.BlockIndex = 3);
 
   // Write an empty block just so our layout matches LLVM.
@@ -261,16 +301,18 @@ begin
   FWriter.EndBlock;
 
 
-  // The FBM exists either at block 1 or block 2 of the MSF.  However, this
-  // allows for a maximum of BlockSize * 8 blocks bits in the FBM, and
+  // FPM (or FBM) = Free Page Map (or Free Block Map)
+  //
+  // The FPM exists either at block 1 or block 2 of the MSF.  However, this
+  // allows for a maximum of BlockSize * 8 blocks bits in the FPM, and
   // thusly an equal number of total blocks in the file.  For a block size
   // of 4Kb (very common), this would yield 32Kb total blocks in file, for a
   // maximum file size of 32Kb * 4Kb = 128Mb.  Obviously this won't do, so
-  // the FBM is split across the file at `BlockSize` intervals.  As a
+  // the FPM is split across the file at `BlockSize` intervals.  As a
   // result, every block whose index is of the form |{1,2} + BlockSize * k|
-  // for any non-negative integer k is an FBM block.  In theory, we only really
+  // for any non-negative integer k is an FPM block.  In theory, we only really
   // need to reserve blocks of the form |{1,2} + BlockSize * 8 * k|, but
-  // current versions of the MSF format already expect the FBM to be arranged
+  // current versions of the MSF format already expect the FPM to be arranged
   // at BlockSize intervals, so we have to be compatible.
   // See the function fpmPn() for more information:
   // https://github.com/Microsoft/microsoft-pdb/blob/master/PDB/msf/msf.cpp#L489
@@ -391,16 +433,25 @@ end;
 
 procedure TMSFFile.WriteStreamBlockList(Writer: TBinaryBlockWriter; Stream: TMSFStream);
 begin
-  // Take advantage of the fact that in our case all blocks within a stream are contiguous
+//  Assert(Stream.BlockIndex <> TMSFStream.NullBlockIndex);
+
+  // We take advantage of the fact that in our case all blocks within a stream are
+  // contiguous (except where the stream straddles an interval boundary). That is,
+  // blocks from different streams do not interleave.
+
   var BlockCount := Ceil(Stream.Length / FBlockSize);
-  var BlockIndex := Stream.BlockIndex;
+  var Offset := Stream.Offset;
   while (BlockCount > 0) do
   begin
-    Assert(BlockIndex <> TMSFStream.NullBlockIndex);
+    // Convert the logical offset to a physical offset, and then the
+    // physical offset to a block index.
+    var PhysicalOffset: Cardinal := TBinaryBlockWriter.LogicalToPhysicalOffset(Offset, FBlockSize);
+    var BlockIndex: Cardinal := PhysicalOffset div FBlockSize;
+
     Writer.Write(BlockIndex);
 
     Dec(BlockCount);
-    Inc(BlockIndex);
+    Inc(Offset, FBlockSize);
   end;
 end;
 
@@ -419,19 +470,6 @@ begin
   FWriter.Write<TMSFSuperBlock>(MSFSuperBlock);
 end;
 
-procedure TMSFFile.WriteBlockMap;
-begin
-  FWriter.BeginBlock;
-  Assert(FWriter.BlockIndex in [1, 2]);
-
-  // Mark all BlockSize*8 blocks occupied
-  for var i := 0 to FBlockSize-1 do
-    FWriter.Write(Byte($FF));
-
-  FWriter.EndBlock;
-end;
-
-
 procedure TMSFFile.WriteDirectoryIndex(IndexStream, DirectoryStream: TMSFStream);
 begin
   IndexStream.BeginStream;
@@ -441,7 +479,6 @@ begin
 
   IndexStream.EndStream;
 end;
-
 
 procedure TMSFFile.WriteDirectory(DirectoryStream: TMSFStream);
 begin
@@ -472,6 +509,7 @@ begin
   DirectoryStream.EndStream;
 end;
 
+
 // -----------------------------------------------------------------------------
 //
 //      TMSFStream
@@ -496,7 +534,7 @@ begin
   FWriter := FMSFFile.BeginStream(Self);
 
   FBlockIndex := FWriter.BeginBlock(Poison);
-  FOffset := FWriter.BaseStream.Position;
+  FOffset := FWriter.Position;
   FState := TMSFStreamState.ssOpen;
 
   Result := FBlockIndex;
@@ -507,7 +545,7 @@ begin
   Assert(FWriter <> nil);
   Assert(FState = TMSFStreamState.ssOpen);
 
-  FLength := Cardinal(FWriter.BaseStream.Position - FOffset);
+  FLength := Cardinal(FWriter.Position - FOffset);
   FWriter.EndBlock;
 
   FMSFFile.EndStream(Self);
@@ -563,21 +601,119 @@ begin
   Assert(FState >= TMSFStreamState.ssIndex);
 end;
 
+
 // -----------------------------------------------------------------------------
 //
 //      TBinaryBlockWriter
 //
 // -----------------------------------------------------------------------------
 
+(*
+  MSF Block and Interval layout
+
+  Interval    |                          0                           |                    1
+  ------------+------------+------+------+------+------+------+------+------+------+------+------+------+- - -
+  Block index |      0     |   1  |   2  |   3  |   4  | ...  | 4095 | 4096 | 4097 | 4095 | 4096 | 4097 | ...
+  ------------+------------+------+------+------+------+------+------+------+------+------+------+------+- - -
+  Log block   |   0 (N/A)  | N/A  | N/A  |   1  |   2  | ...  | ...  | 4094 | N/A  | N/A  | 4095 | ...  | ...
+  ------------+------------+------+------+------+------+------+------+------+------+------+------+------+- - -
+  Phys offset |      0     | 4096 | 8192 |12288 |16384 | ...  | ...  |4096^2|+4096 |+8192 | ...  | ...  | ...
+  ------------+------------+------+------+------+------+------+------+------+------+------+------+------+- - -
+  Content     | Superblock | FPM1 | FPM2 | Data | Data | Data | Data | Data | FPM1 | FPM2 | Data | Data | Data
+*)
+
 constructor TBinaryBlockWriter.Create(AStream: TStream; ABlockSize: Cardinal);
 begin
-  inherited Create(AStream);
+  inherited Create;
+
+  FStream := AStream;
   FBlockSize := ABlockSize;
+  FIntervalSize := FBlockSize * FBlockSize;
+end;
+
+{$ifdef MSF_OFFSET_ROUNDTRIP}
+class function TBinaryBlockWriter.DoLogicalToPhysicalOffset(Offset: Int64; BlockSize: Cardinal): Int64;
+begin
+  Result := Offset + 2 * BlockSize * ((Offset - BlockSize) div (BlockSize * (BlockSize - 2)) + 1);
+end;
+
+class function TBinaryBlockWriter.DoPhysicalToLogicalOffset(Offset: Int64; BlockSize: Cardinal): Int64;
+begin
+  Result := Offset - 2 * BlockSize * ((Offset - BlockSize) div (BlockSize * BlockSize) + 1);
+end;
+{$endif MSF_OFFSET_ROUNDTRIP}
+
+class function TBinaryBlockWriter.LogicalToPhysicalOffset(Offset: Int64; BlockSize: Cardinal): Int64;
+begin
+  (*
+    For each logical Interval (4096-2 blocks), add the two FPM blocks.
+    Shift the offset 1 block before calculating Interval to account for the block at the start of the interval.
+
+                            OfsLog - Block
+    OfsPhys = OfsLog + [ --------------------- +1 ] * Block * 2
+                          Block * (Block - 2)
+  *)
+
+  Assert(Offset >= BlockSize, 'Invalid logical offset');
+{$ifdef MSF_OFFSET_ROUNDTRIP}
+
+  Result := DoLogicalToPhysicalOffset(Offset, BlockSize);
+
+  Assert(Offset = DoPhysicalToLogicalOffset(Result, BlockSize), 'LogicalToPhysicalOffset roundtrip failed');
+
+  // Physical offsets within the two FPMs have no logical mapping
+  Assert((Result - BlockSize) and (BlockSize*BlockSize-1) >= 2*BlockSize);
+
+{$else MSF_OFFSET_ROUNDTRIP}
+
+  Result := Offset + 2 * BlockSize * ((Offset - BlockSize) div (BlockSize * (BlockSize - 2)) + 1);
+
+{$endif MSF_OFFSET_ROUNDTRIP}
+  Assert(Result >= 0);
+end;
+
+function TBinaryBlockWriter.LogicalToPhysicalOffset(Offset: Int64): Int64;
+begin
+  Result := LogicalToPhysicalOffset(Offset, FBlockSize);
+end;
+
+class function TBinaryBlockWriter.PhysicalToLogicalOffset(Offset: Int64; BlockSize: Cardinal): Int64;
+begin
+  (*
+    For each physical Interval (4096 blocks), subtract the two FPM blocks.
+    Shift the offset 1 block before calculating Interval to account for the block at the start of the interval.
+
+                           OfsPhys - Block
+    OfsLog = OfsPhys  - [ ----------------- +1 ] * Block * 2
+                            Block * Block
+  *)
+
+  Assert(Offset >= BlockSize*3, 'Physical offset out of logical bounds');
+{$ifdef MSF_OFFSET_ROUNDTRIP}
+
+  // Physical offsets within the two FPMs have no logical mapping
+  Assert((Offset - BlockSize) and (BlockSize*BlockSize-1) >= 2*BlockSize);
+
+  Result := DoPhysicalToLogicalOffset(Offset, BlockSize);
+
+  Assert(Offset = DoLogicalToPhysicalOffset(Result, BlockSize), 'PhysicalToLogicalOffset roundtrip failed'); // Roundtrip
+
+{$else MSF_OFFSET_ROUNDTRIP}
+
+  Result := Offset - 2 * BlockSize * ((Offset - BlockSize) div (BlockSize * BlockSize) + 1);
+
+{$endif MSF_OFFSET_ROUNDTRIP}
+  Assert(Result >= 0);
+end;
+
+function TBinaryBlockWriter.PhysicalToLogicalOffset(Offset: Int64): Int64;
+begin
+  Result := PhysicalToLogicalOffset(Offset, FBlockSize);
 end;
 
 function TBinaryBlockWriter.WritePadding(DesiredPos: Int64; Poison: boolean): Int64;
 begin
-  Result := DesiredPos - BaseStream.Position;
+  Result := DesiredPos - Position;
   Assert(Result >= 0);
 
   if (Result = 0) then
@@ -585,46 +721,57 @@ begin
 
   // CodeView leaf records are either padded to 4 bytes (if this type stream appears in a TPI/IPI stream
   // of a PDB) or not padded at all (if this type stream appears in the .debug$T section of an object
-  // file). Padding is implemented by inserting a decreasing sequence of <_padding_records> that
+  // file). Padding is implemented by inserting a decreasing sequence of bytes (LF_PAD15..LF_PAD0) that
   // terminates with LF_PAD0.
 
-{-$ifdef DEBUG}
+{$ifdef MSF_POISON}
   if (Poison) then
   begin
     Assert(Result <= $0F);
     var Count := Result;
     while (Count > 0) do
     begin
-//      Write(Byte($0F));
-      Write(Byte((Count and $0F) or $F0)); // http://moyix.blogspot.com/2007/10/types-stream.html
       Dec(Count);
+      Write(Byte((Count and $0F) or $F0)); // http://moyix.blogspot.com/2007/10/types-stream.html
     end;
   end else
-{-$endif DEBUG}
+{$endif MSF_POISON}
     // We're allowed to seek past EOF. File will be physically expanded once we
     // actually write something or explicitly set the size.
     // Note however that if we expand the file this way and the close it with out
     // writing anything, then the file is truncated to the point where we last wrote
     // something. EndBlock(Expand=True) can be used to force the stream to be
     // expanded to the current position.
-    BaseStream.Seek(Result, soCurrent);
+    Seek(Result, soCurrent);
 end;
 
-procedure TBinaryBlockWriter.Write(const Str: string);
+procedure TBinaryBlockWriter.WriteBlockMap;
+const
+  NoVacancies: Byte = $FF;
 begin
-  // TODO : Handle UTF8 here
-  if (Str <> '') then
-    Write(AnsiString(Str))
-  else
-    Write(Byte(0));
+  BeginBlock;
+  Assert((BlockIndex mod FBlockSize) in [1, 2]);
+
+  // Mark all BlockSize*8 blocks occupied
+  for var i := 0 to FBlockSize-1 do
+    FStream.WriteBuffer(NoVacancies, 1);
+
+  EndBlock(True);
 end;
 
-procedure TBinaryBlockWriter.Write(const Str: AnsiString);
+procedure TBinaryBlockWriter.Write(Value: Byte);
 begin
-  if (Str <> '') then
-    BaseStream.WriteBuffer(Str[1], Length(Str)+1) // Include terminating zero
-  else
-    Write(Byte(0));
+  WriteBuffer(Value, SizeOf(Value));
+end;
+
+procedure TBinaryBlockWriter.Write(Value: Word);
+begin
+  WriteBuffer(Value, SizeOf(Value));
+end;
+
+procedure TBinaryBlockWriter.Write(Value: Cardinal);
+begin
+  WriteBuffer(Value, SizeOf(Value));
 end;
 
 procedure TBinaryBlockWriter.Write<T>(const Value: T);
@@ -640,9 +787,54 @@ begin
   WriteBuffer(Values[0], Length(Values) * SizeOf(T));
 end;
 
-procedure TBinaryBlockWriter.WriteBuffer(const Buffer; Count: NativeInt);
+procedure TBinaryBlockWriter.Write(const Str: string);
 begin
-  BaseStream.WriteBuffer(Buffer, Count);
+  // TODO : Handle UTF8 here
+  if (Str <> '') then
+    Write(AnsiString(Str))
+  else
+    Write(Byte(0));
+end;
+
+procedure TBinaryBlockWriter.Write(const Str: AnsiString);
+begin
+  if (Str <> '') then
+    WriteBuffer(Str[1], Length(Str)+1) // Include terminating zero
+  else
+    Write(Byte(0));
+end;
+
+procedure TBinaryBlockWriter.WriteBuffer(const Buffer; Count: NativeInt);
+type
+  TByteArray = array[0..MaxInt-1] of Byte;
+  PByteArray = ^TByteArray;
+begin
+  // Find start and end intervals of this piece of data.
+  // Disregard the first block so intervals start with the two FPM blocks
+  var StartInterval := (FStream.Position - FBlockSize) div FIntervalSize;
+  var EndInterval := (FStream.Position - FBlockSize + Count) div FIntervalSize;
+
+  if (StartInterval <> EndInterval) then
+  begin
+
+    // Data straddles the FPMs and must be split in two.
+    // First part is from current position to start of FPM1
+    var FirstCount := EndInterval * FIntervalSize + FBlockSize - FStream.Position;
+
+    // Write first part
+    FStream.WriteBuffer(Buffer, FirstCount);
+
+    // Write the two FPM blocks
+    WriteBlockMap;
+    WriteBlockMap;
+
+    // Write second part
+    if (Count > FirstCount) then
+      FStream.WriteBuffer(PByteArray(@Buffer)[FirstCount], Count-FirstCount);
+
+  end else
+    // Everything within one interval: Just write it in one go.
+    FStream.WriteBuffer(Buffer, Count);
 end;
 
 function TBinaryBlockWriter.BeginBlock(Poison: boolean): Cardinal;
@@ -654,62 +846,152 @@ end;
 
 procedure TBinaryBlockWriter.EndBlock(Expand: boolean);
 begin
-  var BlockIndex: Word;
-  var Remainder: Word;
-
   // In case we have used Seek to align the position then the physical
   // size can be smaller than the current position in which case we will
   // need to move the position back and write something to actually
   // expand then stream.
-  if (Expand) and (BaseStream.Position > BaseStream.Size) then
-    BaseStream.Position := BaseStream.Size;
+  if (Expand) and (FStream.Position > FStream.Size) then
+  begin
+    Assert(FStream.Size - FStream.Position < FBlockSize);
+    FStream.Position := FStream.Size;
+  end;
 
-  DivMod(BaseStream.Position, FBlockSize, BlockIndex, Remainder);
+  var Padding := FBlockSize - (FStream.Position and (FBlockSize-1));
 
   // Move up to nearest whole block
-  if (Remainder > 0) then
+  if (Padding <> FBlockSize) then
   begin
-    var Missing := FBlockSize - Remainder;
     if (Expand) then
     begin
-      if (Missing > 1) then
-        BaseStream.Position := BaseStream.Position + Missing - 1;
+      if (Padding > 1) then
+        Position := Position + Padding - 1;
       // Physically expand file
       Write(Byte($00));
     end else
       // Just do a seek. File will be automatically expanded if we write anything
-      BaseStream.Position := BaseStream.Position + Missing;
+      Position := Position + Padding;
   end;
+  Assert(FStream.Position and (FBlockSize-1) = 0);
 end;
 
 function TBinaryBlockWriter.GetBlockCount: Cardinal;
 begin
-  Result := (BaseStream.Size + FBlockSize - 1) div FBlockSize;
+  Result := (FStream.Size + FBlockSize - 1) div FBlockSize;
 end;
 
 function TBinaryBlockWriter.GetBlockIndex: Cardinal;
 begin
-  Result := BaseStream.Position div FBlockSize;
+  Result := FStream.Position div FBlockSize;
 end;
 
 function TBinaryBlockWriter.GetIntervalIndex: Cardinal;
 begin
-  Result := BaseStream.Position div FBlockSize div FBlockSize;
+  Result := FStream.Position div FIntervalSize;
+end;
+
+function TBinaryBlockWriter.GetPosition: Int64;
+begin
+  Result := PhysicalToLogicalOffset(FStream.Position);
 end;
 
 function TBinaryBlockWriter.PadToAligment(Alignment: Cardinal; Poison: boolean): Int64;
 begin
-  var Mask: UInt64 := UInt64(Alignment) - 1;
-  Result := Alignment - (UInt64(BaseStream.Position) and Mask);
+  Result := Alignment - (FStream.Position and (Alignment - 1));
   if (Result <> Alignment) then
-    Result := WritePadding(BaseStream.Position + Result, Poison)
+    Result := WritePadding(Position + Result, Poison)
   else
     Result := 0;
+  Assert(FStream.Position and (Alignment - 1) = 0);
+end;
+
+function TBinaryBlockWriter.SaveBookmark: TBlockWriterBookmark;
+begin
+  Result.FWriter := Self;
+  Result.FPosition := FStream.Position;
+end;
+
+function TBinaryBlockWriter.Seek(Offset: Int64; Origin: TSeekOrigin): Int64;
+begin
+  Assert(Origin <> soEnd); // Not supported. No need for it.
+
+  // Make offset absolute
+  case Origin of
+
+    soBeginning:
+      Result := Offset;
+
+    soCurrent:
+      Result := Position + Offset;
+
+  else
+    Result := 0;
+  end;
+
+  Position := Result;
 end;
 
 procedure TBinaryBlockWriter.SetBlockIndex(const Value: Cardinal);
 begin
-  BaseStream.Position := Value * FBlockSize;
+  FStream.Position := Value * FBlockSize;
+end;
+
+procedure TBinaryBlockWriter.SetPosition(const Value: Int64);
+begin
+  var NewPosition := LogicalToPhysicalOffset(Value);
+
+  // If we're expanding the stream then we need to take intervals into account and
+  // write the FPMs when we cross an interval boundary.
+  // If we're not expanding then they have already been handled.
+  if (NewPosition > FStream.Size) then
+  begin
+
+    var OldInterval := (FStream.Position - FBlockSize) div FIntervalSize;
+    var NewInterval := (NewPosition - FBlockSize) div FIntervalSize;
+    Assert(OldInterval <= NewInterval);
+
+    if (OldInterval <> NewInterval) then
+    begin
+      Assert(OldInterval = NewInterval-1);
+
+      // Move up to the start of the FPMs in the next interval
+      var StartOfInterval := NewInterval * FIntervalSize + FBlockSize;
+//      Dec(NewPosition, StartOfInterval - FStream.Position);
+//      Assert(NewPosition >= 0);
+      FStream.Position := StartOfInterval;
+
+      // Write the two FPM blocks
+      WriteBlockMap;
+      WriteBlockMap;
+
+      // Seek into the new interval. Adjust for the two FPMs just written.
+//      Dec(NewPosition, 2 * FBlockSize);
+//      Assert(NewPosition >= 0);
+//      FStream.Seek(NewPosition, soCurrent);
+      FStream.Position := NewPosition;
+      Assert(PhysicalToLogicalOffset(FStream.Position) = Value);
+    end else
+      FStream.Position := NewPosition;
+  end else
+    FStream.Position := NewPosition;
+end;
+
+
+// -----------------------------------------------------------------------------
+//
+//      TBlockWriterBookmark
+//
+// -----------------------------------------------------------------------------
+function TBinaryBlockWriter.TBlockWriterBookmark.GetPosition: Int64;
+begin
+  Result := FWriter.PhysicalToLogicalOffset(FPosition);
+end;
+
+function TBinaryBlockWriter.TBlockWriterBookmark.Restore: TBlockWriterBookmark;
+begin
+  Result.FWriter := FWriter;
+  Result.FPosition := FWriter.FStream.Position;
+
+  FWriter.FStream.Position := FPosition;
 end;
 
 end.
