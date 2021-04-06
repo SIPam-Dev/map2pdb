@@ -709,9 +709,13 @@ end;
 
 procedure TDebugInfoSegment.CheckOverlap;
 begin
+  if (Size = 0) then
+    Exit;
+
   for var Segment in FOwner do
   begin
-    if (Segment = Self) then
+    // Ignore self and empty segments
+    if (Segment = Self) or (Segment.Size = 0) then
       continue;
 
     if ((Offset >= Segment.Offset) and (Offset < Segment.Offset+Segment.Size)) or // Start is within other range
