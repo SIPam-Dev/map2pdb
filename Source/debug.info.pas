@@ -179,6 +179,8 @@ type
     FModule: TDebugInfoModule;
     FSymbols: TDebugInfoSymbolList;
     FComparer: IComparer<TDebugInfoSymbol>;
+  protected
+    function GetCount: integer;
   public
     constructor Create(AModule: TDebugInfoModule);
     destructor Destroy; override;
@@ -186,6 +188,8 @@ type
     function Add(const AName: string; AOffset: TDebugInfoOffset): TDebugInfoSymbol;
 
     procedure CalculateSizes;
+
+    property Count: integer read GetCount;
 
     function GetEnumerator: TEnumerator<TDebugInfoSymbol>;
   end;
@@ -357,6 +361,11 @@ begin
   FSymbols.Free;
 
   inherited;
+end;
+
+function TDebugInfoSymbols.GetCount: integer;
+begin
+  Result := FSymbols.Count;
 end;
 
 function TDebugInfoSymbols.GetEnumerator: TEnumerator<TDebugInfoSymbol>;

@@ -1285,7 +1285,7 @@ var
     var Symbols := TList<TDebugInfoSymbol>.Create;
     try
 
-      // Create a list of symbols and sort it by name.
+      // Create a list of symbols and sort it.
       // This also gives us the symbol count so we can preallocate the symbol array.
       for var Module in FDebugInfo.Modules do
       begin
@@ -1584,47 +1584,23 @@ end;
 
 function TDebugInfoPdbWriter.EmitSubsectionC13SourceFileLines(Writer: TBinaryBlockWriter; Module: TDebugInfoModule): Cardinal;
 
-  function EmitSourceLines(SourceFile: TDebugInfoSourceFile; FileIndex: Cardinal): Cardinal;
+  function EmitSourceFileHeader(SourceFile: TDebugInfoSourceFile; SourceFileOffset: Cardinal; LineCount: Cardinal): Cardinal;
   begin
     Result := Writer.Position;
 
-    // Note that for simplicity we emit a header even for source files that have no lines.
-    // This means that we can rely on that for any module we will emit Module.SourceFiles.Count
-    // entries - for example when assigning a value to TModInfo.SourceFileCount.
-
-
     // Emit header
     var Header := Default(TCVLineBlockFragmentHeader);
-    // NameIndex is an offset into the checksum array written in EmitSubsectionFileChecksums.
-    // We can calculate the offset, instead of having to look it up in a shared list, because
-    // we know that we use FileChecksumKind.None for all entries and that entries are written
-    // in the same order here and in EmitSubsectionFileChecksums.
-    Header.NameIndex := FileIndex * AlignTo(SizeOf(TCVFileChecksumEntryHeader), 4);
-    for var SourceLine in Module.SourceLines do
-      if (SourceLine.SourceFile = SourceFile) then
-        Inc(Header.NumLines);
+    Header.NameIndex := SourceFileOffset;
+    Header.NumLines := LineCount;
     Header.BlockSize := SizeOf(TCVLineBlockFragmentHeader) + Header.NumLines * SizeOf(TCVLineNumberEntry);
 
     Writer.Write<TCVLineBlockFragmentHeader>(Header);
 
-
-    // FIXME: CVDUMP complains when we emit a source file's block of lines that overlap
-    // with the lines of another source file. We should probably block lines so there's
-    // no overlap but I haven't figured out how to output that properly.
-
-    // Emit source lines. They *must* be ordered by line number.
-    for var SourceLine in Module.SourceLines do
-      if (SourceLine.SourceFile = SourceFile) then
-      begin
-        var Line: TCVLineNumberEntry;
-        Line.Offset := SourceLine.Offset; // Line.Offset is relative to TCVLineFragmentHeader.RelocOffset (Module.Offset)
-        Line.Flags := Cardinal(SourceLine.LineNumber or Ord(CVLineMask.StatementFlag));
-        Writer.Write<TCVLineNumberEntry>(Line);
-      end;
-
     Result := Writer.Position - Result;
   end;
 
+type
+  TSourceLineList = TList<TDebugInfoSourceLine>;
 begin
   if (Module is TDebugInfoLinkerModule) then
     Exit(0);
@@ -1641,13 +1617,143 @@ begin
 
   Writer.Write<TCVLineFragmentHeader>(Header);
 
+  // Create a list of source file offsets
+  var SourceFileOffsets := TDictionary<TDebugInfoSourceFile, Cardinal>.Create(Module.SourceFiles.Count);
+  try
+    var SourceFileIndex: Cardinal := 0;
+    for var SourceFile in Module.SourceFiles do
+    begin
+      // The value is an offset into the checksum array written in EmitSubsectionFileChecksums.
+      // We can calculate the offset, instead of having to look it up in a shared list, because
+      // we know that we use FileChecksumKind.None for all entries and that entries are processed
+      // in the same order here and in EmitSubsectionFileChecksums.
+      SourceFileOffsets.Add(SourceFile, SourceFileIndex * AlignTo(SizeOf(TCVFileChecksumEntryHeader), 4));
+      Inc(SourceFileIndex);
+    end;
 
-  // Each source file and its lines
-  var SourceFileIndex: Cardinal := 0;
-  for var SourceFile in Module.SourceFiles do
-  begin
-    EmitSourceLines(SourceFile, SourceFileIndex);
-    Inc(SourceFileIndex);
+    var Lines := TSourceLineList.Create;
+    try
+
+      // Collect all source lines...
+      for var SourceLine in Module.SourceLines do
+        Lines.Add(SourceLine);
+
+      // ...and order them by offset
+      Lines.Sort(TComparer<TDebugInfoSourceLine>.Construct(
+        function(const A, B: TDebugInfoSourceLine): integer
+        begin
+          Result := integer(A.Offset) - integer(B.Offset);
+
+          // Duplicate offets can exist
+        end));
+
+      // Group lines by source file and order the groups by line number
+      var SourceGroups := TObjectList<TSourceLineList>.Create(True);
+      try
+
+        // Apparently VTune needs each symbol within the module to be at the start of a group.
+        // Collect a list of all symbol offsets for the module.
+        var SymbolOffsets := TList<Cardinal>.Create;
+        try
+          SymbolOffsets.Capacity := Module.Symbols.Count;
+          for var Symbol in Module.Symbols do // Already ordered by offset
+            SymbolOffsets.Add(Symbol.Offset);
+
+          var SourceFile: TDebugInfoSourceFile := nil;
+          var Group: TSourceLineList := nil;
+          var NextSymbolOffset: Cardinal := 0;
+          var SymbolOffsetIndex := 0;
+
+          // Group lines by source file
+          for var SourceLine in Lines do
+          begin
+            // If line offset has passed, or is at, a symbol offset then start a new group
+            // and get the next symbol offset.
+            while (SourceLine.Offset >= NextSymbolOffset) do
+            begin
+              if (SymbolOffsetIndex < SymbolOffsets.Count) then
+              begin
+                NextSymbolOffset := SymbolOffsets[SymbolOffsetIndex];
+                Inc(SymbolOffsetIndex);
+              end else
+                NextSymbolOffset := MaxInt;
+
+              SourceFile := nil; // Trigger a new group
+            end;
+
+            // Start a new group
+            if (SourceLine.SourceFile <> SourceFile) then
+            begin
+              SourceFile := SourceLine.SourceFile;
+              Group := TSourceLineList.Create;
+              SourceGroups.Add(Group);
+            end;
+
+            Group.Add(SourceLine);
+          end;
+        finally
+          SymbolOffsets.Free;
+        end;
+
+        // We don't need the Lines list anymore
+        FreeAndNil(Lines);
+
+        // Within each group, order the lines by line number, offset
+        var GroupComparer: IComparer<TDebugInfoSourceLine> := TComparer<TDebugInfoSourceLine>.Construct(
+          function(const A, B: TDebugInfoSourceLine): integer
+          begin
+            Result := integer(A.LineNumber) - integer(B.LineNumber);
+            if (Result = 0) then
+              Result := integer(A.Offset) - integer(B.Offset);
+          end);
+
+        for var Group in SourceGroups do
+          Group.Sort(GroupComparer);
+
+        // Process lines in blocks of source file
+        var SourceFileOffset: Cardinal := 0;
+        var LineCount: Cardinal := 0;
+        for var Group in SourceGroups do
+        begin
+          Assert(Group.Count > 0);
+
+          // Group header
+          EmitSourceFileHeader(Group[0].SourceFile, SourceFileOffsets[Group[0].SourceFile], Group.Count);
+
+          // Emit source lines. They *must* be ordered by line number.
+          for var SourceLine in Group do
+          begin
+            var Line: TCVLineNumberEntry;
+            Line.Offset := SourceLine.Offset; // Line.Offset is relative to TCVLineFragmentHeader.RelocOffset (Module.Offset)
+            Line.Flags := Cardinal(SourceLine.LineNumber or Ord(CVLineMask.StatementFlag));
+            Writer.Write<TCVLineNumberEntry>(Line);
+          end;
+        end;
+      finally
+        SourceGroups.Free;
+      end;
+    finally
+      Lines.Free;
+    end;
+
+
+    // Note that for simplicity we emit a header even for source files that have no lines.
+    // This means that we can rely on, that for any module, we will emit Module.SourceFiles.Count
+    // entries - for example when assigning a value to TModInfo.SourceFileCount.
+
+    // Locate all source files that had no lines associated and emit a header entry for them.
+    // We do this by iterating the source lines and remove the corresponding source file entries
+    // from the file offset list. The remaining entries must be for the source files that have
+    // source lines associated.
+    for var SourceLine in Module.SourceLines do
+      SourceFileOffsets.Remove(SourceLine.SourceFile);
+
+    // Emit headers for empty source files
+    for var SourceFilePair in SourceFileOffsets do
+        EmitSourceFileHeader(SourceFilePair.Key, SourceFilePair.Value, 0);
+
+  finally
+    SourceFileOffsets.Free;
   end;
 
   Result := Writer.Position - Result;
