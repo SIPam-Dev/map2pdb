@@ -1,0 +1,4 @@
+*text=auto
+*.pas text
+*.dpr text
+*.dproj text
