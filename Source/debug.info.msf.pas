@@ -331,7 +331,7 @@ begin
   try
 
     // Sort streams in Index order for the directory
-    FStreams.Sort(TComparer<TMSFStream>.Construct(
+    FStreams.Sort(IComparer<TMSFStream>(
       function(const A, B: TMSFStream): integer
       begin
         if (A.HasIndex) then

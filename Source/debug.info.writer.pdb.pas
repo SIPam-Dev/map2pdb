@@ -1034,7 +1034,7 @@ begin
   // bucket can properly early-out when it detects the record won't be found.
   // The algorithm used here corresponds to the function
   // caseInsensitiveComparePchPchCchCch in the reference implementation.
-  var Comparer := TComparer<integer>.Construct(
+  var Comparer := IComparer<integer>(
     function(const A, B: integer): integer
     begin
       var L := RecordsAccess^[A];
@@ -1245,7 +1245,7 @@ var
     //   https://github.com/microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp#L1945
     // cmpAddrMapByAddrAndName
     //   https://github.com/microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp#L1476
-    TArray.Sort<Cardinal>(AddressMap, TComparer<Cardinal>.Construct(
+    TArray.Sort<Cardinal>(AddressMap, IComparer<Cardinal>(
       function(const A, B: Cardinal): integer
       begin
         var SymA := RecordsAccess^[A];
@@ -1300,7 +1300,7 @@ var
       end;
       SetLength(Publics, Symbols.Count);
 
-      Symbols.Sort(TComparer<TDebugInfoSymbol>.Construct(
+      Symbols.Sort(IComparer<TDebugInfoSymbol>(
         function(const A, B: TDebugInfoSymbol): integer
         begin
           // MS appears to sort by address or segment+offset - not by name
@@ -1702,7 +1702,7 @@ begin
         Lines.Add(SourceLine);
 
       // ...and order them by offset
-      Lines.Sort(TComparer<TDebugInfoSourceLine>.Construct(
+      Lines.Sort(IComparer<TDebugInfoSourceLine>(
         function(const A, B: TDebugInfoSourceLine): integer
         begin
           Result := integer(A.Offset) - integer(B.Offset);
@@ -1762,7 +1762,7 @@ begin
         FreeAndNil(Lines);
 
         // Within each group, order the lines by line number, offset
-        var GroupComparer: IComparer<TDebugInfoSourceLine> := TComparer<TDebugInfoSourceLine>.Construct(
+        var GroupComparer: IComparer<TDebugInfoSourceLine> := IComparer<TDebugInfoSourceLine>(
           function(const A, B: TDebugInfoSourceLine): integer
           begin
             Result := integer(A.LineNumber) - integer(B.LineNumber);

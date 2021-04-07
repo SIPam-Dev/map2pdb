@@ -408,34 +408,10 @@ end;
 
 { TDebugInfoModules }
 
-type
-  TDebugInfoModuleComparer = class(TComparer<TDebugInfoModule>)
-  public
-    function Compare(const Left, Right: TDebugInfoModule): Integer; override;
-
-    class function New: IComparer<TDebugInfoModule>;
-  end;
-
-class function TDebugInfoModuleComparer.New: IComparer<TDebugInfoModule>;
-begin
-  Result := TDebugInfoModuleComparer.Create;
-end;
-
-function TDebugInfoModuleComparer.Compare(const Left, Right: TDebugInfoModule): Integer;
-begin
-  Result := integer(Left.Segment.Index) - integer(Right.Segment.Index);
-  if (Result = 0) then
-    Result := integer(Left.Offset) - integer(Right.Offset); // Cast to avoid integer overflow
-end;
-
-
 function TDebugInfoModules.Add(const AName: string; ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
 begin
   Result := TDebugInfoModule.Create(FDebugInfo, AName, ASegment, AOffset, ASize);
   try
-
-    if (FComparer = niL) then
-      FComparer := TDebugInfoModuleComparer.New;
 
     var Index: integer;
     if (FModules.BinarySearch(Result, Index, FComparer)) then
@@ -455,6 +431,13 @@ begin
 
   FDebugInfo := ADebugInfo;
   FModules := TDebugInfoModuleList.Create;
+  FComparer := IComparer<TDebugInfoModule>(
+    function(const Left, Right: TDebugInfoModule): Integer
+    begin
+      Result := integer(Left.Segment.Index) - integer(Right.Segment.Index);
+      if (Result = 0) then
+        Result := integer(Left.Offset) - integer(Right.Offset); // Cast to avoid integer overflow
+    end);
 end;
 
 destructor TDebugInfoModules.Destroy;
@@ -824,20 +807,6 @@ begin
   Result.LineNumber := ALineNumber;
   Result.Offset := AOffset;
 
-  // Order lines by SourceFile, LineNumber, Offset
-  if (FComparer = nil) then
-    FComparer := TComparer<TDebugInfoSourceLine>.Construct(
-      function(const Left, Right: TDebugInfoSourceLine): integer
-      begin
-        Result := NativeInt(Left.SourceFile)-NativeInt(Right.SourceFile);
-
-        if (Result = 0) then
-          Result := Left.LineNumber - Right.LineNumber;
-
-        if (Result = 0) then
-          Result := integer(Left.Offset) - integer(Right.Offset);
-      end);
-
   // Note that multiple offsets can map to the same Source File+Line Number.
   // This can for example be caused by include files, inlining and generics
   // expansion.
@@ -855,6 +824,19 @@ begin
 
   FModule := AModule;
   FSourceLines := TObjectList<TDebugInfoSourceLine>.Create(True);
+
+  // Order lines by SourceFile, LineNumber, Offset
+  FComparer := IComparer<TDebugInfoSourceLine>(
+    function(const Left, Right: TDebugInfoSourceLine): integer
+    begin
+      Result := NativeInt(Left.SourceFile)-NativeInt(Right.SourceFile);
+
+      if (Result = 0) then
+        Result := Left.LineNumber - Right.LineNumber;
+
+      if (Result = 0) then
+        Result := integer(Left.Offset) - integer(Right.Offset);
+    end);
 end;
 
 destructor TDebugInfoSourceLines.Destroy;
