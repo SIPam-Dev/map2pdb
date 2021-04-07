@@ -1761,13 +1761,11 @@ begin
         // We don't need the Lines list anymore
         FreeAndNil(Lines);
 
-        // Within each group, order the lines by line number, offset
+        // Within each group, order the lines by offset
         var GroupComparer: IComparer<TDebugInfoSourceLine> := IComparer<TDebugInfoSourceLine>(
           function(const A, B: TDebugInfoSourceLine): integer
           begin
-            Result := integer(A.LineNumber) - integer(B.LineNumber);
-            if (Result = 0) then
-              Result := integer(A.Offset) - integer(B.Offset);
+            Result := integer(A.Offset) - integer(B.Offset);
           end);
 
         for var Group in SourceGroups do
@@ -1813,7 +1811,7 @@ begin
 
     // Emit headers for empty source files
     for var SourceFilePair in SourceFileOffsets do
-        EmitSourceFileHeader(SourceFilePair.Key, SourceFilePair.Value, 0);
+      EmitSourceFileHeader(SourceFilePair.Key, SourceFilePair.Value, 0);
 
   finally
     SourceFileOffsets.Free;
