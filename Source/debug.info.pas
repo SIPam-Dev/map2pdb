@@ -178,7 +178,6 @@ type
   private
     FModule: TDebugInfoModule;
     FSymbols: TDebugInfoSymbolList;
-    FComparer: IComparer<TDebugInfoSymbol>;
   protected
     function GetCount: integer;
   public
@@ -375,28 +374,34 @@ end;
 
 function TDebugInfoSymbols.Add(const AName: string; AOffset: TDebugInfoOffset): TDebugInfoSymbol;
 begin
-  Result := TDebugInfoSymbol.Create(FModule, AName, AOffset);
+  // Binary search
+  var L := 0;
+  var H := FSymbols.Count-1;
 
-  if (FComparer = nil) then
-    FComparer := TComparer<TDebugInfoSymbol>.Construct(
-      function(const Left, Right: TDebugInfoSymbol): integer
-      begin
-        Result := integer(Left.Offset) - integer(Right.Offset);
-      end);
-
-  var Index: integer;
-  if (FSymbols.BinarySearch(Result, Index, FComparer)) then
+  while (L <= H) do
   begin
-    // Return existing if we have an exact duplicate of Name+Offset
+    var mid := L + (H - L) shr 1;
 
-    if (Result.Name <> AName) then
+    var Symbol := FSymbols[mid];
+
+    if (AOffset < Symbol.Offset) then
+      H := mid - 1
+    else
+    if (AOffset >= Symbol.Offset) then
+      L := mid + 1
+    else
     begin
+      // Return existing if we have an exact duplicate of Name+Offset
+      if (Symbol.Name = AName) then
+        Exit(Symbol);
+
       // Disallow duplicate offset but don't fail
-      Result.Free;
-      Result := nil;
+      Exit(nil);
     end;
-  end else
-    FSymbols.Insert(Index, Result);
+  end;
+
+  Result := TDebugInfoSymbol.Create(FModule, AName, AOffset);
+  FSymbols.Insert(L, Result);
 end;
 
 { TDebugInfoModules }
