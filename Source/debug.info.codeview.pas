@@ -557,7 +557,7 @@ type
   //
   // RecordKind = S_GPROC32
   //
-  // LLVM: ProcSymHeader / ProcSym
+  // LLVM: ProcSym
   //
   //   https://llvm.org/doxygen/classllvm_1_1codeview_1_1ProcSym.html
   //
@@ -568,16 +568,19 @@ type
   TCVProcSym = packed record
     Header: TCVTypeRecordHeader;
 
-    Parent: Cardinal;           // Pointer to the parent
-    &End: Cardinal;             // Pointer to this blocks end
-    Next: Cardinal;             // Pointer to next symbol
+    // Pointer values appear to be offsets in symbol stream. Specifically, offsets
+    // to the first byte after the Header.
+    OffsetParent: Cardinal;     // Pointer to the parent
+    OffsetEnd: Cardinal;        // Pointer to this blocks end
+    OffsetNext: Cardinal;       // Pointer to next symbol
+
     CodeSize: Cardinal;         // Proc length
-    DbgStart: Cardinal;         // Debug start offset
-    DbgEnd: Cardinal;           // Debug end offset
+    DbgStart: Cardinal;         // Debug start offset - relative to CodeOffset
+    DbgEnd: Cardinal;           // Debug end offset - relative to CodeOffset
     FunctionType: Cardinal;     // Type index or ID
     CodeOffset: Cardinal;       // Offset, relative to segment
     Segment: Word;              // Segment #
-    Flags: Cardinal;            // Bit mask of CVProcFlags values
+    Flags: Byte;                // Bit mask of CVProcFlags values
 
     { Variable length elements follows:
     Name: AnsiString;           // Zero terminated name
@@ -589,15 +592,33 @@ type
   // LLVM: ProcSymFlags
   //
   CVProcFlags = (
-    CVPFlagHasFP                = $00000001,    // Frame pointer present
-    CVPFlagHasIntRet            = $00000002,    // Interrupt return
-    CVPFlagHasFarRet            = $00000004,    // Far return
-    CVPFlagIsNoReturn           = $00000008,    // Function does not return
-    CVPFlagIsUnreachable        = $00000010,    // Label isn't fallen into
-    CVPFlagHasCustomCallConv    = $00000020,    // Custom calling convention
-    CVPFlagIsNoInline           = $00000040,    // Function marked as noinline
-    CVPFlagHasOptimizedDebugInfo= $00000080     // Function has debug information for optimized code
+    CVPFlagNone                 = 0,
+    CVPFlagHasFP                = $01,  // Frame pointer present
+    CVPFlagHasIntRet            = $02,  // Interrupt return
+    CVPFlagHasFarRet            = $04,  // Far return
+    CVPFlagIsNoReturn           = $08,  // Function does not return
+    CVPFlagIsUnreachable        = $10,  // Label isn't fallen into
+    CVPFlagHasCustomCallConv    = $20,  // Custom calling convention
+    CVPFlagIsNoInline           = $40,  // Function marked as noinline
+    CVPFlagHasOptimizedDebugInfo= $80   // Function has debug information for optimized code
   );
+
+
+type
+  //
+  // RecordKind = S_END
+  //
+  // LLVM: ScopeEndSym
+  //
+  //   https://llvm.org/doxygen/classllvm_1_1codeview_1_1ScopeEndSym.html
+  //
+  // MS: (none)
+  //
+  //   https://github.com/microsoft/microsoft-pdb/blob/master/include/cvinfo.h
+  //
+  TCVScopeEndSym = packed record
+    Header: TCVTypeRecordHeader;
+  end;
 
 
 type

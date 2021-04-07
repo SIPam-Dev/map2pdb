@@ -33,6 +33,8 @@ interface
 
 {$SCOPEDENUMS ON}
 
+{-$define EMIT_S_GPROC32}        // Define to emit module symbols as S_GPROC32 records in module stream
+
 uses
   System.Generics.Collections,
   System.Generics.Defaults,
@@ -1412,6 +1414,8 @@ end;
 
 
 function TDebugInfoPdbWriter.EmitModuleSymbols(Writer: TBinaryBlockWriter; Module: TDebugInfoModule): Cardinal;
+var
+  StartOffset: Int64;
 
   procedure EmitSectionSymbol(Section: TDebugInfoSegment);
   begin
@@ -1479,27 +1483,85 @@ function TDebugInfoPdbWriter.EmitModuleSymbols(Writer: TBinaryBlockWriter; Modul
     Assert(Symbol.Header.RecordLen+SizeOf(Symbol.Header.RecordLen) <= CVMaxRecordLength);
   end;
 
+  procedure EmitProcSymbol(ASymbol: TDebugInfoSymbol);
+  begin
+    var Symbol := Default(TCVProcSym);
+
+    Symbol.Header.RecordLen := AlignTo(SizeOf(Symbol) + Length(ASymbol.Name) + 1, 4) - SizeOf(Symbol.Header.RecordLen);
+    Symbol.Header.RecordKind := Ord(CVSymbolRecordKind.S_GPROC32);
+
+    Symbol.CodeSize := ASymbol.Size;
+    Symbol.CodeOffset := ASymbol.Module.Offset + ASymbol.Offset;
+    Symbol.Segment := ASymbol.Module.Segment.Index;
+    Symbol.DbgStart := 0;
+    Symbol.DbgEnd := Symbol.CodeSize;
+
+    // With this value for OffsetEnd the S_END must come immediately after this
+    // S_GPROC32 symbol or the PDB will break VTune.
+    // If we at some time add symbols in between then the calculation of OffsetEnd
+    // will have to change.
+    Symbol.OffsetEnd := (Writer.Position-StartOffset) + Symbol.Header.RecordLen + SizeOf(Symbol.Header.RecordLen) + SizeOf(TCVTypeRecordHeader);
+
+    Writer.Write<TCVProcSym>(Symbol);
+    Writer.Write(ASymbol.Name);
+
+    Writer.PadToAligment(4);
+    Assert(Symbol.Header.RecordLen+SizeOf(Symbol.Header.RecordLen) <= CVMaxRecordLength);
+
+
+    Assert(Symbol.OffsetEnd = Writer.Position-StartOffset+SizeOf(TCVTypeRecordHeader));
+  end;
+
+  procedure EmitEndSymbol;
+  begin
+    var Symbol := Default(TCVScopeEndSym);
+
+    Symbol.Header.RecordLen := AlignTo(SizeOf(Symbol), 4) - SizeOf(Symbol.Header.RecordLen);
+    Symbol.Header.RecordKind := Ord(CVSymbolRecordKind.S_END);
+
+    Writer.Write<TCVScopeEndSym>(Symbol);
+
+    Writer.PadToAligment(4);
+    Assert(Symbol.Header.RecordLen+SizeOf(Symbol.Header.RecordLen) <= CVMaxRecordLength);
+  end;
+
 begin
   Result := Writer.Position;
+  StartOffset := Result;
 
-  // Disabled to make the symbol list smaller. Doesn't seem to be needed.
+  // Disabled to make the symbol list smaller. Doesn't seem to be used by VTune.
   // EmitObjNameSymbol;
 
   if (Module is TDebugInfoLinkerModule) then
   begin
+
     // Emit S_COMPILE3
     EmitLinkerSymbol;
 
     // Emit S_SECTION for all segments
     for var Segment in FDebugInfo.Segments do
       EmitSectionSymbol(Segment);
+
   end else
-    ;
+  begin
+
+{$ifdef EMIT_S_GPROC32}
+    // if S_GPROC32 symbols are emitted for all the symbols in the module, then
+    // VTune will use the name specified in the S_GPROC32 symbol. Otherwise it
+    // will use the S_PUB32 symbol.
+    for var Symbol in Module.Symbols do
+    begin
+      EmitProcSymbol(Symbol);
+      EmitEndSymbol;
+    end;
+{$endif EMIT_S_GPROC32}
+
     // Disabled to make the symbol list smaller. Doesn't seem to be needed.
     // EmitSectionSymbol(Module.Segment);
 
+  end;
+
   // TODO : S_COFFGROUP
-  // TODO : Method symbols: S_GPROC32
 
   // Both LLVM & MS aligns the symbol substream
   Assert(Writer.PadToAligment(4) = 0);
