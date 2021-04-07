@@ -20,6 +20,7 @@ uses
 {$endif MADEXCEPT}
   System.SysUtils,
   System.IOUtils,
+  System.Diagnostics,
   debug.info.reader.map in 'debug.info.reader.map.pas',
   debug.info.writer.yaml in 'debug.info.writer.yaml.pas',
   debug.info in 'debug.info.pas',
@@ -73,12 +74,26 @@ begin
   Writeln;
 end;
 
+procedure DisplayElapsedTime(ms: Int64);
+const
+  MillisecondsPerSecond = 1000;
+  MillisecondsPerMinute = 60 * Int64(MillisecondsPerSecond);
+  MillisecondsPerHour = 60 * Int64(MillisecondsPerMinute);
+begin
+  Writeln(Format('Elapsed time: %.2d:%.2d:%.2d.%d', [
+    (ms div MillisecondsPerHour) mod 24,
+    (ms div MillisecondsPerMinute) mod 60,
+    (ms div MillisecondsPerSecond) mod 60,
+    (ms mod MillisecondsPerSecond)]));
+end;
+
 type
   TTargetType = (ttPDB, ttYAML);
 const
   sFileTypes: array[TTargetType] of string = ('.pdb', '.yaml');
   WriterClasses: array[TTargetType] of TDebugInfoWriterClass = (TDebugInfoPdbWriter, TDebugInfoYamlWriter);
 begin
+  var sw := TStopwatch.StartNew;
   try
 
     DisplayBanner;
@@ -206,5 +221,5 @@ begin
     end;
 {$endif MADEXCEPT}
   end;
+  DisplayElapsedTime(sw.ElapsedMilliseconds);
 end.
-
