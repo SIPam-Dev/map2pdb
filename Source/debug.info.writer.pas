@@ -65,10 +65,11 @@ end;
 
 procedure TDebugInfoWriter.SaveToFile(const Filename: string; DebugInfo: TDebugInfo);
 begin
-  var Stream := TFileStream.Create(Filename, fmCreate);
+  var Stream := TMemoryStream.Create;
   try
 
     SaveToStream(Stream, DebugInfo);
+    Stream.SaveToFile(Filename);
 
   finally
     Stream.Free;
