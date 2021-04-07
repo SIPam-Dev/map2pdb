@@ -555,6 +555,53 @@ type
 
 type
   //
+  // RecordKind = S_GPROC32
+  //
+  // LLVM: ProcSymHeader / ProcSym
+  //
+  //   https://llvm.org/doxygen/classllvm_1_1codeview_1_1ProcSym.html
+  //
+  // MS: PROCSYM32
+  //
+  //   https://github.com/microsoft/microsoft-pdb/blob/master/include/cvinfo.h#L3722
+  //
+  TCVProcSym = packed record
+    Header: TCVTypeRecordHeader;
+
+    Parent: Cardinal;           // Pointer to the parent
+    &End: Cardinal;             // Pointer to this blocks end
+    Next: Cardinal;             // Pointer to next symbol
+    CodeSize: Cardinal;         // Proc length
+    DbgStart: Cardinal;         // Debug start offset
+    DbgEnd: Cardinal;           // Debug end offset
+    FunctionType: Cardinal;     // Type index or ID
+    CodeOffset: Cardinal;       // Offset, relative to segment
+    Segment: Word;              // Segment #
+    Flags: Cardinal;            // Bit mask of CVProcFlags values
+
+    { Variable length elements follows:
+    Name: AnsiString;           // Zero terminated name
+    }
+  end;
+
+  //
+  // MS: CV_PROCFLAGS
+  // LLVM: ProcSymFlags
+  //
+  CVProcFlags = (
+    CVPFlagHasFP                = $00000001,    // Frame pointer present
+    CVPFlagHasIntRet            = $00000002,    // Interrupt return
+    CVPFlagHasFarRet            = $00000004,    // Far return
+    CVPFlagIsNoReturn           = $00000008,    // Function does not return
+    CVPFlagIsUnreachable        = $00000010,    // Label isn't fallen into
+    CVPFlagHasCustomCallConv    = $00000020,    // Custom calling convention
+    CVPFlagIsNoInline           = $00000040,    // Function marked as noinline
+    CVPFlagHasOptimizedDebugInfo= $00000080     // Function has debug information for optimized code
+  );
+
+
+type
+  //
   // MS: CV_DebugSSubsectionHeader_t
   //
   // LLVM: DebugSubsectionHeader
@@ -958,7 +1005,9 @@ end;
 function TCVPublicSym32.GetName: AnsiString;
 begin
   // Note: string is length prefixed so we skip that with +SizeOf(Word)
-  Result := PAnsiChar(pointer(NativeUInt(@Self) + SizeOf(Self) + SizeOf(Word)));
+  // No it's not. Maybe in an older version of PDB ist was.
+
+  Result := PAnsiChar(pointer(NativeUInt(@Self) + SizeOf(Self) { + SizeOf(Word)}));
 end;
 
 end.
