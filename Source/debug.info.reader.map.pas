@@ -10,6 +10,8 @@ unit debug.info.reader.map;
 
 interface
 
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
+
 uses
   System.Classes,
   debug.info,

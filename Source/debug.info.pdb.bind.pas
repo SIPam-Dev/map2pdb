@@ -10,6 +10,8 @@ unit debug.info.pdb.bind;
 
 interface
 
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
+
 procedure PatchPE(const Filename, PdbFilename: string; Logging: boolean = False);
 
 implementation

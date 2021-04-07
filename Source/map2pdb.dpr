@@ -10,6 +10,7 @@ program map2pdb;
 
 {$APPTYPE CONSOLE}
 {$WARN SYMBOL_PLATFORM OFF}
+{$WEAKLINKRTTI ON}
 
 {$R *.res}
 

@@ -10,6 +10,8 @@ unit debug.info;
 
 interface
 
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
+
 uses
   System.Generics.Collections,
   System.Generics.Defaults;

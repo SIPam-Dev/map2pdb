@@ -31,6 +31,7 @@ unit debug.info.pdb;
 
 interface
 
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
 {$SCOPEDENUMS ON}
 
 var

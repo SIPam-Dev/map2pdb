@@ -8,6 +8,7 @@ unit debug.info.writer.yaml;
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *)
 
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
 {$define WRITE_LINES}
 {$define WRITE_SYMBOLS}
 {.$define WRITE_PUBLICS} // Doesn't work and llvm-pdbutil doesn't support it properly

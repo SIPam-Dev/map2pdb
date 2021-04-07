@@ -31,6 +31,7 @@ unit debug.info.writer.pdb;
 
 interface
 
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
 {$SCOPEDENUMS ON}
 
 {-$define EMIT_S_GPROC32}        // Define to emit module symbols as S_GPROC32 records in module stream

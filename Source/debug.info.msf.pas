@@ -10,7 +10,7 @@ unit debug.info.msf;
 
 interface
 
-
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
 {$SCOPEDENUMS ON}
 
 {-$define MSF_OFFSET_ROUNDTRIP}  // Define to verify that Logical/Physical offset calculations can roundtrip

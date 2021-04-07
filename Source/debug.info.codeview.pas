@@ -35,6 +35,7 @@ uses
   WinApi.Windows,
   System.SysUtils; // TBytes
 
+{$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
 {$SCOPEDENUMS ON}
 
 //
