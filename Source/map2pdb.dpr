@@ -21,6 +21,9 @@ uses
   System.SysUtils,
   System.IOUtils,
   System.Diagnostics,
+  System.Generics.Collections,
+  System.Masks,
+  System.StrUtils,
   debug.info.reader.map in 'debug.info.reader.map.pas',
   debug.info.writer.yaml in 'debug.info.writer.yaml.pas',
   debug.info in 'debug.info.pas',
@@ -55,22 +58,43 @@ end;
 procedure DisplayBanner;
 begin
   Writeln('map2pdb - Copyright (c) 2021 Anders Melander');
-  Writeln('Version 2.2');
+  Writeln('Version 2.4');
   Writeln;
 end;
 
 procedure DisplayHelp;
 begin
+  //                1         2         3         4         5         6         7         8
+  //       12345678901234567890123456789012345678901234567890123456789012345678901234567890
+  //
   Writeln('Parses the map file produced by Delphi and writes a PDB file.');
   Writeln;
   Writeln('Usage: map2pdb [options] <map-filename>');
   Writeln;
   Writeln('Options:');
   Writeln('  -v                         Verbose output');
-  Writeln('  -pdb[:<output-filename>]   Writes a PDB (default)');
-  Writeln('  -yaml[:<output-filename>]  Writes an YAML file that can be used with llvm-pdbutil');
-  Writeln('  -bind[:<exe-filename>]     Patches a Delphi compiled exe file to include a reference to the pdb file');
+  Writeln('  -pdb[:<output-filename>]   Writes a PDB file (default)');
+  Writeln('  -yaml[:<output-filename>]  Writes an YAML file that can be used with');
+  Writeln('                             llvm-pdbutil');
+  Writeln('  -bind[:<exe-filename>]     Patches a Delphi compiled exe/dll file to include');
+  Writeln('                             a reference to the pdb file');
+  Writeln('  -include:<filenames>       Include the specified list of modules in the pdb');
+  Writeln('                             (semicolor separated list, wildcards supported)');
+  Writeln('  -exclude:<filenames>       Exclude the specified list of modules from the pdb');
+  Writeln('                             (semicolor separated list, wildcards supported)');
   Writeln('  -test                      Works on test data. Ignores the input file');
+  Writeln;
+  Writeln('Examples:');
+  Writeln;
+  Writeln('* Read from foobar.map, create foobar.pdb, patch foobar.exe to reference');
+  Writeln('  foobar.pdb and ignore all units starting with "system" or "dx":');
+  Writeln;
+  Writeln('    map2pdb -exclude:system*;dx* -bind foobar.map');
+  Writeln;
+  Writeln('* Read from mypackage.map, create mypackage.pdb, patch mypackage.bpl to');
+  Writeln('  reference mypackage.pdb:');
+  Writeln;
+  Writeln('    map2pdb -bind:mypackage.bpl mypackage.map');
   Writeln;
 end;
 
@@ -85,6 +109,55 @@ begin
     (ms div MillisecondsPerMinute) mod 60,
     (ms div MillisecondsPerSecond) mod 60,
     (ms mod MillisecondsPerSecond)]));
+end;
+
+procedure FilterModules(DebugInfo: TDebugInfo; const ModuleFilter: string; Include: boolean; Logging: boolean);
+begin
+  try
+    var MaskValues := ModuleFilter.Split([';']);
+
+    var Masks := TObjectList<TMask>.Create;
+    try
+      Masks.Capacity := Length(MaskValues);
+      for var MaskValue in MaskValues do
+        Masks.Add(TMask.Create(MaskValue));
+
+      for var i := DebugInfo.Modules.Count-1 downto 0 do
+      begin
+        var Module := DebugInfo.Modules[i];
+        var KeepIt: boolean := not Include;
+
+        for var Mask in Masks do
+          if (Mask.Matches(Module.Name)) then
+          begin
+            KeepIt := Include;
+            break;
+          end;
+
+        if (not KeepIt) then
+        begin
+          if (Logging) then
+          begin
+            if (Include) then
+              Writeln(Format('Include filter eliminated module: %s', [Module.Name]))
+            else
+              Writeln(Format('Exclude filter eliminated module: %s', [Module.Name]));
+          end;
+
+          DebugInfo.Modules.Remove(Module);
+        end;
+      end;
+    finally
+      Masks.Free;
+    end;
+
+  except
+    on E: EMaskException do
+    begin
+      Writeln(Format('Invalid filter. %s', [E.Message]));
+      Halt(1);
+    end;
+  end;
 end;
 
 type
@@ -143,9 +216,13 @@ begin
         Writeln(Format('Output filename not specified. Defaulting to %s', [TPath.GetFileName(TargetFilename)]));
     end;
 
+
     var DebugInfo := TDebugInfo.Create;
     try
 
+      (*
+      ** Read source file
+      *)
       var ReaderClass: TDebugInfoReaderClass := TDebugInfoMapReader;
 
       if (Test) then
@@ -163,6 +240,24 @@ begin
       end;
 
 
+      (*
+      ** Apply filters
+      *)
+
+      // Eliminate modules that doesn't satisfy include filter
+      var ModuleFilter := ''; // Include everything by default
+      if (FindCmdLineSwitch('include', ModuleFilter, True, [clstValueAppended])) and (ModuleFilter <> '') then
+        FilterModules(DebugInfo, ModuleFilter, True, Logging);
+
+      // Eliminate modules that satisfies exclude filter
+      ModuleFilter := ''; // Exclude nothing by default
+      if (FindCmdLineSwitch('exclude', ModuleFilter, True, [clstValueAppended])) and (ModuleFilter <> '') then
+        FilterModules(DebugInfo, ModuleFilter, False, Logging);
+
+
+      (*
+      ** Write target file
+      *)
       var Writer := WriterClasses[TargetType].Create;
       try
 
@@ -179,6 +274,9 @@ begin
     end;
 
 
+    (*
+    ** Bind PE file to PDB
+    *)
     if (PEFilename <> '') or (FindCmdLineSwitch('bind')) then
     begin
       if (TargetType <> ttPDB) then

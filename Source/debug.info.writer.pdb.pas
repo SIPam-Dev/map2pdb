@@ -1714,10 +1714,10 @@ begin
       var SourceGroups := TObjectList<TSourceLineList>.Create(True);
       try
 
-        // Apparently VTune needs each symbol within the module to be at the start of a group.
-        // Collect a list of all symbol offsets for the module.
         var SymbolOffsets := TList<Cardinal>.Create;
         try
+          // Apparently each symbol within the module must be at the start of a group.
+          // Collect a list of all symbol offsets for the module.
           SymbolOffsets.Capacity := Module.Symbols.Count;
           for var Symbol in Module.Symbols do // Already ordered by offset
             SymbolOffsets.Add(Symbol.Offset);
@@ -1781,7 +1781,7 @@ begin
           // Group header
           EmitSourceFileHeader(Group[0].SourceFile, SourceFileOffsets[Group[0].SourceFile], Group.Count);
 
-          // Emit source lines. They *must* be ordered by line number.
+          // Emit source lines. They *must* be ordered by offset.
           for var SourceLine in Group do
           begin
             var Line: TCVLineNumberEntry;

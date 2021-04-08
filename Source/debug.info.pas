@@ -239,6 +239,7 @@ type
     FModules: TDebugInfoModuleList;
     FComparer: IComparer<TDebugInfoModule>;
   protected
+    function GetModule(Index: integer): TDebugInfoModule;
     function GetCount: integer;
     function GetEmpty: boolean;
   public
@@ -246,10 +247,13 @@ type
     destructor Destroy; override;
 
     function Add(const AName: string; ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
+    procedure Remove(Module: TDebugInfoModule);
+
     function FindByName(const AName: string; ASegment: TDebugInfoSegment): TDebugInfoModule;
     function FindByOffset(ASegment: TDebugInfoSegment; AOffset: TDebugInfoOffset): TDebugInfoModule;
     function FindOverlap(ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset): TDebugInfoModule;
 
+    property Modules[Index: integer]: TDebugInfoModule read GetModule; default;
     property Count: integer read GetCount;
     property Empty: boolean read GetEmpty;
 
@@ -430,7 +434,7 @@ begin
   inherited Create;
 
   FDebugInfo := ADebugInfo;
-  FModules := TDebugInfoModuleList.Create;
+  FModules := TDebugInfoModuleList.Create(True);
   FComparer := IComparer<TDebugInfoModule>(
     function(const Left, Right: TDebugInfoModule): Integer
     begin
@@ -536,6 +540,16 @@ end;
 function TDebugInfoModules.GetEnumerator: TEnumerator<TDebugInfoModule>;
 begin
   Result := FModules.GetEnumerator;
+end;
+
+function TDebugInfoModules.GetModule(Index: integer): TDebugInfoModule;
+begin
+  Result := FModules[Index];
+end;
+
+procedure TDebugInfoModules.Remove(Module: TDebugInfoModule);
+begin
+  FModules.Remove(Module);
 end;
 
 { TDebugInfoSymbol }
