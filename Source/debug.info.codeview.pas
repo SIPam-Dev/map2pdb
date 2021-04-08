@@ -43,13 +43,15 @@ uses
 //
 type
   CV_INFO_PDB70 = record
-    CvSignature: DWORD;
+    CvSignature: Cardinal;
     Signature: TGUID;
-    Age: DWORD;
-    PdbFileName: array[0..0] of BYTE;
+    Age: Cardinal;
+    { Variable length elements follows:
+    PdbFileName: AnsiString;
+    }
   end;
   TCodeViewInfoPDB70 = CV_INFO_PDB70;
-  PCodeViewInfoPDB70 = ^TCodeViewInfoPDB70;
+
 
 //
 // MS: CV_CPU_TYPE_e
