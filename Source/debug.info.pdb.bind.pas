@@ -12,7 +12,7 @@ interface
 
 {$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
 
-procedure PatchPE(const Filename, PdbFilename: string; Logging: boolean = False);
+procedure PatchPE(const Filename, PdbFilename: string);
 
 implementation
 
@@ -22,26 +22,10 @@ uses
   System.Math,
   WinApi.Windows,
   debug.info.codeview,
-  debug.info.pdb;
+  debug.info.pdb,
+  debug.info.log;
 
-procedure PatchPE(const Filename, PdbFilename: string; Logging: boolean = False);
-
-  procedure Log(const Msg: string);
-  begin
-    if (Logging) then
-      Writeln(Msg);
-  end;
-
-  procedure Error(const Msg: string); overload;
-  begin
-    Writeln(Msg);
-    Halt(1);
-  end;
-
-  procedure Error(const Fmt: string; const Args: array of const); overload;
-  begin
-    Error(Format(Fmt, Args));
-  end;
+procedure PatchPE(const Filename, PdbFilename: string);
 
   function AlignTo(Value, Alignment: Cardinal): Cardinal;
   begin
@@ -52,7 +36,8 @@ procedure PatchPE(const Filename, PdbFilename: string; Logging: boolean = False)
 const
   sSectionDebug: array[0..IMAGE_SIZEOF_SHORT_NAME-1] of AnsiChar = '.debug';
 begin
-  Log('Patching PE file');
+  var Logger := RegisterDebugInfoModuleLogger('bind');
+  Logger.Info('Patching PE file');
 
   // Get the PDB filename as UTF-8
   var DebugBytes := TEncoding.UTF8.GetBytes(PdbFilename);
@@ -62,9 +47,20 @@ begin
   // And the size of the debug section that contains the CodeView block
   var DebugSectionSize: Cardinal := DebugSize + SizeOf(TImageDebugDirectory);
 
-
-  var Stream := TFileStream.Create(Filename, fmOpenReadWrite or fmShareExclusive);
+  var Stream: TStream := nil;
   try
+    try
+
+      Stream := TFileStream.Create(Filename, fmOpenReadWrite or fmShareExclusive);
+
+    except
+      on E: EFOpenError do
+      begin
+        Logger.Error(E.Message);
+        Exit;
+      end;
+    end;
+
     (*
     ** DOS header
     *)
@@ -72,7 +68,7 @@ begin
     Stream.ReadBuffer(DosHeader, SizeOf(DosHeader));
 
     if (DosHeader.e_magic <> IMAGE_DOS_SIGNATURE) then
-      Error('Invalid DOS file signature');
+      Logger.Error('Invalid DOS file signature');
 
 
     (*
@@ -104,7 +100,7 @@ begin
     case OptionalHeader32.Magic of
       IMAGE_NT_OPTIONAL_HDR32_MAGIC:
         begin
-          Log('- PE32 image (32-bit)');
+          Logger.Info('- PE32 image (32-bit)');
           PE32Plus := False;
 
           Stream.ReadBuffer(OptionalHeader32.MajorLinkerVersion,
@@ -117,7 +113,7 @@ begin
 
       IMAGE_NT_OPTIONAL_HDR64_MAGIC:
         begin
-          Log('- PE32+ image (64-bit)');
+          Logger.Info('- PE32+ image (64-bit)');
           PE32Plus := True;
           OptionalHeader64.Magic := OptionalHeader32.Magic;
 
@@ -129,7 +125,7 @@ begin
           OptionalHeader64.CheckSum := 0
         end;
     else
-      Error('Invalid or unsupported PE image type: %.4X', [OptionalHeader32.Magic]);
+      Logger.Error('Invalid or unsupported PE image type: %.4X', [OptionalHeader32.Magic]);
     end;
 
 
@@ -140,7 +136,7 @@ begin
     // is dynamic (contrary to what the header structure suggests).
     // Read the data directory but limit the size to something usable (and reasonable).
     if (NumberOfRvaAndSizes < IMAGE_DIRECTORY_ENTRY_DEBUG-1) or (NumberOfRvaAndSizes > $100) then
-      Error('Invalid or unsupported PE directory size: %d', [NumberOfRvaAndSizes]);
+      Logger.Error('Invalid or unsupported PE directory size: %d', [NumberOfRvaAndSizes]);
     var DataDirectory: TArray<TImageDataDirectory>;
     SetLength(DataDirectory, NumberOfRvaAndSizes);
     Stream.ReadBuffer(DataDirectory[0], NumberOfRvaAndSizes * SizeOf(TImageDataDirectory));
@@ -197,7 +193,7 @@ begin
 
       // If we didn't find a debug section then the PE is corrupt
       if (not HasDebugSection) then
-        Error('Failed to locate debug section referenced in PE directory');
+        Logger.Error('Failed to locate debug section referenced in PE directory');
 
     end else
       // There was no existing section entry.
@@ -211,7 +207,7 @@ begin
 
       if (not HasDebugSection) then
       begin
-        Log('- Adding .debug section.');
+        Logger.Info('- Adding .debug section.');
 
         if (FileHeader.NumberOfSections > 0) then
         begin
@@ -219,7 +215,7 @@ begin
           // The space available is from the current position (end of the existing section list)
           // to the first byte of the first section.
           if (SectionHeaders[0].PointerToRawData - SectionHeaderOffset < SizeOf(TImageSectionHeader)) then
-            Error('There is no room left for an additional section header. Expansion has not been implemented');
+            Logger.Error('There is no room left for an additional section header. Expansion has not been implemented');
         end;
 
         // We will be adding the debug data to the end of the file.
@@ -234,7 +230,7 @@ begin
         else
           Inc(OptionalHeader32.SizeOfImage, AlignTo(DebugSectionSize, OptionalHeader32.SectionAlignment));
       end else
-        Log('- Updating existing .debug section.');
+        Logger.Info('- Updating existing .debug section.');
 
       var SectionHeader := Default(TImageSectionHeader);
       // Name: An 8-byte, null-padded UTF-8 encoded string. If the string is exactly 8 characters
@@ -318,7 +314,7 @@ begin
     Stream.WriteData(DebugBytes, Length(DebugBytes));
     const Zero: Byte = 0;
     Stream.WriteBuffer(Zero, 1);
-    Log('- PDB file name has been stored in debug data.');
+    Logger.Info('- PDB file name has been stored in debug data.');
 
 
     // Write updated headers...
@@ -333,7 +329,7 @@ begin
 
     // ...and the data directory
     Stream.WriteBuffer(DataDirectory[0], NumberOfRvaAndSizes * SizeOf(TImageDataDirectory));
-    Log('- PE file has been updated.');
+    Logger.Info('- PE file has been updated.');
 
 
     // TODO : Clear certificate if PE has one. Our modification renders the certificate invalid anyway.

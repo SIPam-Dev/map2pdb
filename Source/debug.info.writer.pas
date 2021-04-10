@@ -14,65 +14,51 @@ interface
 
 uses
   System.Classes,
-  debug.info;
+  debug.info,
+  debug.info.log;
 
 type
   // Abstract writer base class
   TDebugInfoWriter = class abstract
   private
-    FLogging: boolean;
+    FModuleLogger: IDebugInfoModuleLogger;
   protected
-    procedure Log(const Msg: string); virtual;
-    procedure Warning(const Msg: string);
-    procedure Error(const Msg: string);
+    property Logger: IDebugInfoModuleLogger read FModuleLogger;
   public
     constructor Create; virtual;
 
     procedure SaveToStream(Stream: TStream; DebugInfo: TDebugInfo); virtual; abstract;
     procedure SaveToFile(const Filename: string; DebugInfo: TDebugInfo);
-
-    property Logging: boolean read FLogging write FLogging;
   end;
 
   TDebugInfoWriterClass = class of TDebugInfoWriter;
 
-implementation
 
-{ TDebugInfoWriter }
+implementation
 
 constructor TDebugInfoWriter.Create;
 begin
   inherited Create;
-  // Does nothing. We just need a virtual constructor for polymorphism.
-end;
-
-procedure TDebugInfoWriter.Log(const Msg: string);
-begin
-  if (FLogging) then
-    WriteLn(Msg);
-end;
-
-procedure TDebugInfoWriter.Warning(const Msg: string);
-begin
-  WriteLn('Warning: ' + Msg);
-end;
-
-procedure TDebugInfoWriter.Error(const Msg: string);
-begin
-  WriteLn('Error:   ' + Msg);
-  Halt(1);
+  FModuleLogger := RegisterDebugInfoModuleLogger('writer');
 end;
 
 procedure TDebugInfoWriter.SaveToFile(const Filename: string; DebugInfo: TDebugInfo);
 begin
-  var Stream := TMemoryStream.Create;
   try
 
-    SaveToStream(Stream, DebugInfo);
-    Stream.SaveToFile(Filename);
+    var Stream := TMemoryStream.Create;
+    try
 
-  finally
-    Stream.Free;
+      SaveToStream(Stream, DebugInfo);
+      Stream.SaveToFile(Filename);
+
+    finally
+      Stream.Free;
+    end;
+
+  except
+    on E: EFCreateError do
+      Logger.Error(E.Message);
   end;
 end;
 

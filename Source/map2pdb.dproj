@@ -135,6 +135,7 @@
         <DCCReference Include="debug.info.reader.pas"/>
         <DCCReference Include="debug.info.pdb.bind.pas"/>
         <DCCReference Include="debug.info.msf.pas"/>
+        <DCCReference Include="debug.info.log.pas"/>
         <BuildConfiguration Include="Release">
             <Key>Cfg_2</Key>
             <CfgParent>Base</CfgParent>

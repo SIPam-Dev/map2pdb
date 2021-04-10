@@ -74,8 +74,7 @@ var
   end;
 
 begin
-  if (Logging) then
-    Log('Writing YAML file');
+  Logger.Info('Writing YAML file');
 
   Writer := TStreamWriter.Create(Stream);
   try
@@ -130,7 +129,7 @@ begin
           if (not (Module.Segment.SegClassType in [sctCODE, sctICODE])) then
             continue;
 
-          Log(Format('- Module: %s', [Module.Name]));
+          Logger.Info(Format('- Module: %s', [Module.Name]));
 
           BeginBlock('- Module: ''%s''', [Module.Name]);
           begin

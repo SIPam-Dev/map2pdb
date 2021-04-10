@@ -14,30 +14,21 @@ interface
 
 uses
   System.Classes,
-  debug.info;
+  debug.info,
+  debug.info.log;
 
 type
   // Abstract reader base class
   TDebugInfoReader = class abstract
   private
-    FLogging: boolean;
+    FModuleLogger: IDebugInfoModuleLogger;
   protected
-    procedure Log(const Msg: string);
-    procedure Warning(const Msg: string); overload;
-    procedure Warning(const Fmt: string; const Args: array of const); overload;
-    procedure Warning(LineNumber: integer; const Msg: string); overload;
-    procedure Warning(LineNumber: integer; const Fmt: string; const Args: array of const); overload;
-    procedure Error(const Msg: string); overload;
-    procedure Error(const Fmt: string; const Args: array of const); overload;
-    procedure Error(LineNumber: integer; const Msg: string); overload;
-    procedure Error(LineNumber: integer; const Fmt: string; const Args: array of const); overload;
+    property Logger: IDebugInfoModuleLogger read FModuleLogger;
   public
     constructor Create; virtual;
 
     procedure LoadFromStream(Stream: TStream; DebugInfo: TDebugInfo); virtual; abstract;
     procedure LoadFromFile(const Filename: string; DebugInfo: TDebugInfo); virtual;
-
-    property Logging: boolean read FLogging write FLogging;
   end;
 
   TDebugInfoReaderClass = class of TDebugInfoReader;
@@ -52,68 +43,25 @@ uses
 constructor TDebugInfoReader.Create;
 begin
   inherited Create;
-  // Does nothing. We just need a virtual constructor for polymorphism.
-end;
-
-procedure TDebugInfoReader.Log(const Msg: string);
-begin
-  if (FLogging) then
-    WriteLn(Msg);
-end;
-
-procedure TDebugInfoReader.Warning(const Msg: string);
-begin
-  WriteLn('Warning: '+Msg);
-end;
-
-procedure TDebugInfoReader.Warning(const Fmt: string; const Args: array of const);
-begin
-  Warning(Format(Fmt, Args));
-end;
-
-procedure TDebugInfoReader.Warning(LineNumber: integer; const Msg: string);
-begin
-  Warning('[%5d] %s', [LineNumber, Msg]);
-end;
-
-procedure TDebugInfoReader.Warning(LineNumber: integer; const Fmt: string; const Args: array of const);
-begin
-  Warning(LineNumber, Format(Fmt, Args));
-end;
-
-procedure TDebugInfoReader.Error(const Msg: string);
-begin
-  WriteLn('Error:   '+Msg);
-  Halt(1);
-end;
-
-procedure TDebugInfoReader.Error(const Fmt: string; const Args: array of const);
-begin
-  Error(Format(Fmt, Args));
-  Halt(1);
-end;
-
-procedure TDebugInfoReader.Error(LineNumber: integer; const Msg: string);
-begin
-  Error('[%5d] %s', [LineNumber, Msg]);
-  Halt(1);
-end;
-
-procedure TDebugInfoReader.Error(LineNumber: integer; const Fmt: string; const Args: array of const);
-begin
-  Error(LineNumber, Format(Fmt, Args));
-  Halt(1);
+  FModuleLogger := RegisterDebugInfoModuleLogger('reader');
 end;
 
 procedure TDebugInfoReader.LoadFromFile(const Filename: string; DebugInfo: TDebugInfo);
 begin
-  var Stream := TFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite);
   try
 
-    LoadFromStream(Stream, DebugInfo);
+    var Stream := TFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite);
+    try
 
-  finally
-    Stream.Free;
+      LoadFromStream(Stream, DebugInfo);
+
+    finally
+      Stream.Free;
+    end;
+
+  except
+    on E: EFOpenError do
+      Logger.Error(E.Message);
   end;
 end;
 

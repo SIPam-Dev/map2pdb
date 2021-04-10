@@ -15,9 +15,9 @@ program map2pdb;
 {$R *.res}
 
 uses
-{$ifdef MADEXCEPT}
+  {$ifdef MADEXCEPT}
   madExcept,
-{$endif MADEXCEPT}
+  {$endif MADEXCEPT}
   System.SysUtils,
   System.IOUtils,
   System.Diagnostics,
@@ -34,7 +34,11 @@ uses
   debug.info.reader.test in 'debug.info.reader.test.pas',
   debug.info.reader in 'debug.info.reader.pas',
   debug.info.pdb.bind in 'debug.info.pdb.bind.pas',
-  debug.info.msf in 'debug.info.msf.pas';
+  debug.info.msf in 'debug.info.msf.pas',
+  debug.info.log in 'debug.info.log.pas';
+
+var
+  Logger: IDebugInfoModuleLogger;
 
 // Find parameter by index (zero based), ignores switches.
 function FindParam(Index: integer; var Value: string; const Default: string = ''): boolean;
@@ -104,17 +108,20 @@ const
   MillisecondsPerMinute = 60 * Int64(MillisecondsPerSecond);
   MillisecondsPerHour = 60 * Int64(MillisecondsPerMinute);
 begin
-  Writeln(Format('Elapsed time: %.2d:%.2d:%.2d.%d', [
+  Logger.Info('Elapsed time: %.2d:%.2d:%.2d.%d', [
     (ms div MillisecondsPerHour) mod 24,
     (ms div MillisecondsPerMinute) mod 60,
     (ms div MillisecondsPerSecond) mod 60,
-    (ms mod MillisecondsPerSecond)]));
+    (ms mod MillisecondsPerSecond)]);
 end;
 
-procedure FilterModules(DebugInfo: TDebugInfo; const ModuleFilter: string; Include: boolean; Logging: boolean);
+procedure FilterModules(DebugInfo: TDebugInfo; const ModuleFilter: string; Include: boolean);
 begin
   try
     var MaskValues := ModuleFilter.Split([';']);
+
+    var CountIncluded := 0;
+    var CountExcluded := 0;
 
     var Masks := TObjectList<TMask>.Create;
     try
@@ -136,12 +143,14 @@ begin
 
         if (not KeepIt) then
         begin
-          if (Logging) then
+          if (Include) then
           begin
-            if (Include) then
-              Writeln(Format('Include filter eliminated module: %s', [Module.Name]))
-            else
-              Writeln(Format('Exclude filter eliminated module: %s', [Module.Name]));
+            Inc(CountIncluded);
+            Logger.Debug('Include filter eliminated module: %s', [Module.Name])
+          end else
+          begin
+            Inc(CountExcluded);
+            Logger.Debug('Exclude filter eliminated module: %s', [Module.Name]);
           end;
 
           DebugInfo.Modules.Remove(Module);
@@ -150,6 +159,12 @@ begin
     finally
       Masks.Free;
     end;
+
+    if (CountIncluded > 0) then
+      Logger.Info('Filter included %.0n module(s)', [CountIncluded * 1.0]);
+
+    if (CountExcluded > 0) then
+      Logger.Info('Filter excluded %.0n module(s)', [CountExcluded * 1.0]);
 
   except
     on E: EMaskException do
@@ -161,6 +176,31 @@ begin
 end;
 
 type
+  TDebugInfoConsoleLogger = class(TInterfacedObject, IDebugInfoLogger)
+  protected
+    // IDebugInfoLogger
+    procedure Log(Category: TDebugInfoLogCategory; LogModule: TDebugInfoLogModule; const Msg: string);
+  public
+    class function New: IDebugInfoLogger;
+  end;
+
+procedure TDebugInfoConsoleLogger.Log(Category: TDebugInfoLogCategory; LogModule: TDebugInfoLogModule; const Msg: string);
+const
+  sLogCategory: array[TDebugInfoLogCategory] of string = ('Debug: ', '', 'Warning: ', 'Error: ', 'Fatal: ');
+begin
+  if (Category >= DebugInfoLogLevel) then
+    Writeln(Format('%s%s', [sLogCategory[Category], Msg]));
+
+  if (Category = lcFatal) then
+    Halt(1);
+end;
+
+class function TDebugInfoConsoleLogger.New: IDebugInfoLogger;
+begin
+  Result := TDebugInfoConsoleLogger.Create;
+end;
+
+type
   TTargetType = (ttPDB, ttYAML);
 const
   sFileTypes: array[TTargetType] of string = ('.pdb', '.yaml');
@@ -168,6 +208,9 @@ const
 begin
   var sw := TStopwatch.StartNew;
   try
+
+    RegisterDebugInfoLogger(TDebugInfoConsoleLogger.New);
+    Logger := RegisterDebugInfoModuleLogger('main');
 
     DisplayBanner;
 
@@ -184,7 +227,12 @@ begin
     end;
 
     var Test := FindCmdLineSwitch('t') or FindCmdLineSwitch('test');
-    var Logging := FindCmdLineSwitch('v') or FindCmdLineSwitch('verbose');
+
+    if FindCmdLineSwitch('debug') then
+      SetDebugInfoLogLevel(lcDebug)
+    else
+    if FindCmdLineSwitch('v') or FindCmdLineSwitch('verbose') then
+      SetDebugInfoLogLevel(lcInfo);
 
     var TargetType: TTargetType := ttPDB;
     if (FindCmdLineSwitch('yaml', TargetFilename, True, [clstValueAppended])) or (FindCmdLineSwitch('yaml')) then
@@ -203,8 +251,7 @@ begin
       begin
         PdbBuildSignature := TGUID.NewGuid;
 
-        if (Logging) then
-          Writeln(Format('Constructed a new PDB GUID: %s', [PdbBuildSignature.ToString]));
+        Logger.Info('Constructed a new PDB GUID: %s', [PdbBuildSignature.ToString]);
       end;
     end;
 
@@ -212,8 +259,7 @@ begin
     begin
       TargetFilename := TPath.ChangeExtension(SourceFilename, sFileTypes[TargetType]);
 
-      if (Logging) then
-        Writeln(Format('Output filename not specified. Defaulting to %s', [TPath.GetFileName(TargetFilename)]));
+      Logger.Info('Output filename not specified. Defaulting to %s', [TPath.GetFileName(TargetFilename)]);
     end;
 
 
@@ -231,8 +277,6 @@ begin
       var Reader := ReaderClass.Create;
       try
 
-        Reader.Logging := Logging;
-
         Reader.LoadFromFile(SourceFilename, DebugInfo);
 
       finally
@@ -247,12 +291,12 @@ begin
       // Eliminate modules that doesn't satisfy include filter
       var ModuleFilter := ''; // Include everything by default
       if (FindCmdLineSwitch('include', ModuleFilter, True, [clstValueAppended])) and (ModuleFilter <> '') then
-        FilterModules(DebugInfo, ModuleFilter, True, Logging);
+        FilterModules(DebugInfo, ModuleFilter, True);
 
       // Eliminate modules that satisfies exclude filter
       ModuleFilter := ''; // Exclude nothing by default
       if (FindCmdLineSwitch('exclude', ModuleFilter, True, [clstValueAppended])) and (ModuleFilter <> '') then
-        FilterModules(DebugInfo, ModuleFilter, False, Logging);
+        FilterModules(DebugInfo, ModuleFilter, False);
 
 
       (*
@@ -260,8 +304,6 @@ begin
       *)
       var Writer := WriterClasses[TargetType].Create;
       try
-
-        Writer.Logging := Logging;
 
         Writer.SaveToFile(TargetFilename, DebugInfo);
 
@@ -286,11 +328,10 @@ begin
       begin
         PEFilename := TPath.ChangeExtension(SourceFilename, '.exe');
 
-        if (Logging) then
-          Writeln(Format('PE filename not specified. Defaulting to %s', [TPath.GetFileName(PEFilename)]));
+        Logger.Info('PE filename not specified. Defaulting to %s', [TPath.GetFileName(PEFilename)]);
       end;
 
-      PatchPE(PEFilename, TargetFilename, Logging);
+      PatchPE(PEFilename, TargetFilename);
     end;
 
 
