@@ -50,7 +50,7 @@ procedure TDebugInfoReader.LoadFromFile(const Filename: string; DebugInfo: TDebu
 begin
   try
 
-    var Stream := TFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite);
+    var Stream := TBufferedFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite);
     try
 
       LoadFromStream(Stream, DebugInfo);

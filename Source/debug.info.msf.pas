@@ -17,7 +17,6 @@ interface
 {-$define MSF_POISON}            // Define to write MSF poison padding
 
 uses
-sysutils,
   System.Generics.Collections,
   System.Classes,
   debug.info.pdb;
@@ -48,6 +47,7 @@ type
     FBlockSize: Cardinal;
     FIntervalSize: Cardinal;
     FStream: TStream;
+    FStreamSize: Int64; // Cached/calculated Stream.Size to avoid flushing TBufferedFileStream buffers
   strict private
     function GetBlockCount: Cardinal;
     function GetIntervalIndex: Cardinal;
@@ -743,6 +743,7 @@ begin
     // something. EndBlock(Expand=True) can be used to force the stream to be
     // expanded to the current position.
     Seek(Result, soCurrent);
+  FStreamSize := Max(FStreamSize, FStream.Position);
 end;
 
 procedure TBinaryBlockWriter.WriteBlockMap;
@@ -755,6 +756,8 @@ begin
   // Mark all BlockSize*8 blocks occupied
   for var i := 0 to FBlockSize-1 do
     FStream.WriteBuffer(NoVacancies, 1);
+
+  FStreamSize := Max(FStreamSize, FStream.Position);
 
   EndBlock(True);
 end;
@@ -835,6 +838,7 @@ begin
   end else
     // Everything within one interval: Just write it in one go.
     FStream.WriteBuffer(Buffer, Count);
+  FStreamSize := Max(FStreamSize, FStream.Position);
 end;
 
 function TBinaryBlockWriter.BeginBlock(Poison: boolean): Cardinal;
@@ -850,10 +854,10 @@ begin
   // size can be smaller than the current position in which case we will
   // need to move the position back and write something to actually
   // expand then stream.
-  if (Expand) and (FStream.Position > FStream.Size) then
+  if (Expand) and (FStream.Position > FStreamSize) then
   begin
-    Assert(FStream.Size - FStream.Position < FBlockSize);
-    FStream.Position := FStream.Size;
+    Assert(FStreamSize - FStream.Position < FBlockSize);
+    FStream.Position := FStreamSize;
   end;
 
   var Padding := FBlockSize - (FStream.Position and (FBlockSize-1));
@@ -872,11 +876,12 @@ begin
       Position := Position + Padding;
   end;
   Assert(FStream.Position and (FBlockSize-1) = 0);
+  FStreamSize := Max(FStreamSize, FStream.Position);
 end;
 
 function TBinaryBlockWriter.GetBlockCount: Cardinal;
 begin
-  Result := (FStream.Size + FBlockSize - 1) div FBlockSize;
+  Result := (FStreamSize + FBlockSize - 1) div FBlockSize;
 end;
 
 function TBinaryBlockWriter.GetBlockIndex: Cardinal;
@@ -933,6 +938,7 @@ end;
 procedure TBinaryBlockWriter.SetBlockIndex(const Value: Cardinal);
 begin
   FStream.Position := Value * FBlockSize;
+  FStreamSize := Max(FStreamSize, FStream.Position);
 end;
 
 procedure TBinaryBlockWriter.SetPosition(const Value: Int64);
@@ -942,7 +948,7 @@ begin
   // If we're expanding the stream then we need to take intervals into account and
   // write the FPMs when we cross an interval boundary.
   // If we're not expanding then they have already been handled.
-  if (NewPosition > FStream.Size) then
+  if (NewPosition > FStreamSize) then
   begin
 
     var OldInterval := (FStream.Position - FBlockSize) div FIntervalSize;
@@ -973,6 +979,7 @@ begin
       FStream.Position := NewPosition;
   end else
     FStream.Position := NewPosition;
+  FStreamSize := Max(FStreamSize, FStream.Position);
 end;
 
 

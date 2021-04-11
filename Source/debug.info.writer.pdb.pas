@@ -183,15 +183,16 @@ end;
 function GsiRecordCmp(const S1, S2: AnsiString): integer;
 begin
   // Shorter strings always compare less than longer strings.
-  if (Length(S1) <> Length(S2)) then
-    Exit(Length(S1) - Length(S2));
-
-  // If either string contains non ascii characters, memcmp them.
-  if (not IsAsciiString(S1)) or (not IsAsciiString(S2)) then
-    Exit(MemCmp(pointer(S1), pointer(S2), Length(S1)));
-
-  // Both strings are ascii, perform a case-insensitive comparison.
-  Result := System.AnsiStrings.CompareText(S1, S2);
+  Result := Length(S1) - Length(S2);
+  if (Result = 0) then
+  begin
+    // If either string contains non ascii characters, memcmp them.
+    if (not IsAsciiString(S1)) or (not IsAsciiString(S2)) then
+      Result := MemCmp(pointer(S1), pointer(S2), Length(S1))
+    else
+      // Both strings are ascii, perform a case-insensitive comparison.
+      Result := System.AnsiStrings.CompareText(S1, S2);
+  end;
 end;
 
 
@@ -889,6 +890,7 @@ type
 
   TPublicSymArray = TArray<TPublicSym32ex>;
   PPublicSymArray = ^TPublicSymArray;
+  PPublicSym32ex = ^TPublicSym32ex;
 
 type
   TGSIHashStreamBuilder = record
@@ -1037,8 +1039,9 @@ begin
   var Comparer := IComparer<integer>(
     function(const A, B: integer): integer
     begin
-      var L := RecordsAccess^[A];
-      var R := RecordsAccess^[B];
+      // Pointers to records in order to avoid invoking a copy of the record
+      var L: PPublicSym32ex := @RecordsAccess^[A];
+      var R: PPublicSym32ex := @RecordsAccess^[B];
 
       Result := GsiRecordCmp(L.Name, R.Name);
 
@@ -1248,8 +1251,9 @@ var
     TArray.Sort<Cardinal>(AddressMap, IComparer<Cardinal>(
       function(const A, B: Cardinal): integer
       begin
-        var SymA := RecordsAccess^[A];
-        var SymB := RecordsAccess^[B];
+        // Pointers to records in order to avoid invoking a copy of the record
+        var SymA: PPublicSym32ex := @RecordsAccess^[A];
+        var SymB: PPublicSym32ex := @RecordsAccess^[B];
 
         Result := integer(SymA.Symbol.Module.Segment.Index) - integer(SymB.Symbol.Module.Segment.Index);
 

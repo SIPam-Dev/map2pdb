@@ -168,10 +168,7 @@ begin
 
   except
     on E: EMaskException do
-    begin
-      Writeln(Format('Invalid filter. %s', [E.Message]));
-      Halt(1);
-    end;
+      Logger.Error('Invalid filter. %s', [E.Message]);
   end;
 end;
 
@@ -192,7 +189,7 @@ begin
     Writeln(Format('%s%s', [sLogCategory[Category], Msg]));
 
   if (Category = lcFatal) then
-    Halt(1);
+    Abort;
 end;
 
 class function TDebugInfoConsoleLogger.New: IDebugInfoLogger;
@@ -334,7 +331,6 @@ begin
       PatchPE(PEFilename, TargetFilename);
     end;
 
-
   except
 {$ifdef MADEXCEPT}
     madExcept.HandleException;
@@ -344,7 +340,7 @@ begin
       Writeln('Press enter to continue');
       Readln;
     end;
-    Halt(1);
+    ExitCode := 1;
 {$else MADEXCEPT}
     on E: Exception do
     begin
@@ -356,9 +352,17 @@ begin
         Readln;
       end;
 
-      Halt(1);
+      ExitCode := 1;
     end;
 {$endif MADEXCEPT}
   end;
+
   DisplayElapsedTime(sw.ElapsedMilliseconds);
+
+  if (ExitCode = 0) and (FindCmdLineSwitch('pause')) then
+  begin
+    Writeln('Done - Press enter to continue');
+    Readln;
+  end;
+
 end.

@@ -12,6 +12,10 @@ interface
 
 {$RTTI EXPLICIT METHODS([]) PROPERTIES([]) FIELDS([])}
 
+// Define SAVE_MEMSTREAM to use a TMemoryStream when constructing the PDB.
+// Otherwise a TBufferedFileStream is used.
+{$define SAVE_MEMSTREAM}
+
 uses
   System.Classes,
   debug.info,
@@ -46,11 +50,18 @@ procedure TDebugInfoWriter.SaveToFile(const Filename: string; DebugInfo: TDebugI
 begin
   try
 
+{$ifdef SAVE_MEMSTREAM}
     var Stream := TMemoryStream.Create;
+{$else SAVE_MEMSTREAM}
+    var Stream := TBufferedFileStream.Create(Filename, fmCreate, $8000);
+{$endif SAVE_MEMSTREAM}
     try
 
       SaveToStream(Stream, DebugInfo);
+
+{$ifdef SAVE_MEMSTREAM}
       Stream.SaveToFile(Filename);
+{$endif SAVE_MEMSTREAM}
 
     finally
       Stream.Free;
