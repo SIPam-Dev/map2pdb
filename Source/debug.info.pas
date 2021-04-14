@@ -140,6 +140,7 @@ type
     FSourceLines: TObjectList<TDebugInfoSourceLine>;
     FComparer: IComparer<TDebugInfoSourceLine>;
   protected
+    function GetCount: integer;
     function GetEmpty: boolean;
   public
     constructor Create(AModule: TDebugInfoModule);
@@ -147,6 +148,7 @@ type
 
     function Add(ASourceFile: TDebugInfoSourceFile; ALineNumber: integer; AOffset: TDebugInfoOffset): TDebugInfoSourceLine;
 
+    property Count: integer read GetCount;
     property Empty: boolean read GetEmpty;
 
     function GetEnumerator: TEnumerator<TDebugInfoSourceLine>;
@@ -858,6 +860,11 @@ begin
   FSourceLines.Free;
 
   inherited;
+end;
+
+function TDebugInfoSourceLines.GetCount: integer;
+begin
+  Result := FSourceLines.Count;
 end;
 
 function TDebugInfoSourceLines.GetEmpty: boolean;

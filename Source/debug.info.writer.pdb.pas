@@ -148,7 +148,8 @@ uses
   System.AnsiStrings,
   System.SysUtils,
   System.Math,
-  debug.info.codeview;
+  debug.info.codeview,
+  debug.info.log;
 
 function AlignTo(Value, Alignment: Cardinal): Cardinal;
 begin
@@ -917,7 +918,7 @@ type
     // Assign public and global symbol records into hash table buckets.
     // Modifies the list of records to store the bucket index, but does not
     // change the order.
-    procedure BuildBuckets(RecordZeroOffset: Cardinal; var Records: TPublicSymArray);
+    procedure BuildBuckets(RecordZeroOffset: Cardinal; var Records: TPublicSymArray; const Logger: IDebugInfoModuleLogger);
 
     function Emit(Writer: TBinaryBlockWriter): Cardinal;
   end;
@@ -988,7 +989,7 @@ begin
       Length(BucketOffsets) * SizeOf(Cardinal));
 end;
 
-procedure TGSIHashStreamBuilder.BuildBuckets(RecordZeroOffset: Cardinal; var Records: TPublicSymArray);
+procedure TGSIHashStreamBuilder.BuildBuckets(RecordZeroOffset: Cardinal; var Records: TPublicSymArray; const Logger: IDebugInfoModuleLogger);
 type
   TBucketChain = TArray<integer>;
   THashTable = array[0..IPHR_HASH-1] of TBucketChain;
@@ -1052,6 +1053,7 @@ begin
     end);
 
   var ChainCount := 0;
+  var Collisions := 0;
   for var Index := 0 to High(HashTable) do
   begin
     if (Length(HashTable[Index]) = 0) then
@@ -1061,8 +1063,25 @@ begin
 
     // Count number of chains while we're at it
     Inc(ChainCount);
+    Inc(Collisions, Length(HashTable[Index])-1);
   end;
 
+
+  if (DebugInfoLogLevel <= lcDebug) then
+  begin
+    var CollisionPercent: Double;
+    var AverageChain: Double;
+    if (Length(Records) > 0) then
+    begin
+      CollisionPercent := Collisions / Length(Records) * 100;
+      AverageChain := Length(Records) / ChainCount;
+    end else
+    begin
+      CollisionPercent := 0;
+      AverageChain := 0;
+    end;
+    Logger.Debug('GSI hash table. Fill factor: %.1n%%, Collisions: %.1n%%, Average chain: %.1n', [ChainCount / IPHR_HASH * 100, CollisionPercent, AverageChain]);
+  end;
 
   // Place symbols into the hash table in bucket order. This flattens the hash
   // structure to a sequential list of items with all empty buckets removed.
@@ -1113,7 +1132,7 @@ var
 
   procedure BuildPublicsHash(var HashStreamBuilder: TGSIHashStreamBuilder);
   begin
-    HashStreamBuilder.BuildBuckets(0, Publics);
+    HashStreamBuilder.BuildBuckets(0, Publics, Logger);
   end;
 
   procedure BuildGlobalsHash(var HashStreamBuilder: TGSIHashStreamBuilder; RecordZeroOffset: Cardinal);
@@ -1139,7 +1158,7 @@ var
       Inc(SymOffset, Globals[Index].Length);
     end;
 
-    HashStreamBuilder.BuildBuckets(RecordZeroOffset, Records);
+    HashStreamBuilder.BuildBuckets(RecordZeroOffset, Records, Logger);
   end;
 
   function EmitPublics(Writer: TBinaryBlockWriter; var Records: TPublicSymArray): Cardinal;
@@ -1604,6 +1623,7 @@ begin
 
   // Sum size of all source file names across all modules and populate hash
   // table while we do it
+  var Collisions := 0;
   for var Index := 0 to Strings.Count-1 do
   begin
     var Filename := AnsiString(Strings[Index]);
@@ -1615,7 +1635,10 @@ begin
       Hash := HashStringV2(Filename) mod Buckets;
 
     while (Hash = 0) or (HashTable[Hash] <> EmptyBucket) do
+    begin
       Hash := (Hash + 1) mod Buckets; // Collision - linear probe for next bucket
+      Inc(Collisions);
+    end;
 
     HashTable[Hash] := StringTableHeader.ByteSize; // Store string offset in bucket
 
@@ -1624,6 +1647,16 @@ begin
 
     // Sum size
     Inc(StringTableHeader.ByteSize, Length(Filename)+1);
+  end;
+
+  if (DebugInfoLogLevel <= lcDebug) then
+  begin
+    var CollisionPercent: Double;
+    if (Strings.Count > 0) then
+      CollisionPercent := Collisions / Strings.Count * 100
+    else
+      CollisionPercent := 0;
+    Logger.Debug('String hash table. Fill factor: %.1n%%, Collisions: %.1n%%', [Strings.Count / Buckets * 100, CollisionPercent]);
   end;
 
 

@@ -121,8 +121,10 @@ begin
   try
     var MaskValues := ModuleFilter.Split([';']);
 
-    var CountIncluded := 0;
-    var CountExcluded := 0;
+    var SymbolsIncludeEliminateCount := 0;
+    var SymbolsExcludeEliminateCount := 0;
+    var ModulesIncludeEliminateCount := 0;
+    var ModulesExcludeEliminateCount := 0;
 
     var Masks := TObjectList<TMask>.Create;
     var Segments := TList<Word>.Create;
@@ -161,11 +163,13 @@ begin
         begin
           if (Include) then
           begin
-            Inc(CountIncluded);
+            Inc(ModulesIncludeEliminateCount);
+            Inc(SymbolsIncludeEliminateCount, Module.Symbols.Count);
             Logger.Debug('Include filter eliminated module: %s', [Module.Name])
           end else
           begin
-            Inc(CountExcluded);
+            Inc(ModulesExcludeEliminateCount);
+            Inc(SymbolsExcludeEliminateCount, Module.Symbols.Count);
             Logger.Debug('Exclude filter eliminated module: %s', [Module.Name]);
           end;
 
@@ -177,11 +181,11 @@ begin
       Masks.Free;
     end;
 
-    if (CountIncluded > 0) then
-      Logger.Info('Filter included %.0n module(s)', [CountIncluded * 1.0]);
+    if (ModulesIncludeEliminateCount > 0) then
+      Logger.Info('Include filter eliminated %.0n module(s), %.0n symbol(s)', [ModulesIncludeEliminateCount * 1.0, SymbolsIncludeEliminateCount * 1.0]);
 
-    if (CountExcluded > 0) then
-      Logger.Info('Filter excluded %.0n module(s)', [CountExcluded * 1.0]);
+    if (ModulesExcludeEliminateCount > 0) then
+      Logger.Info('Exclude filter eliminated %.0n module(s), %.0n symbols(s)', [ModulesExcludeEliminateCount * 1.0, SymbolsExcludeEliminateCount * 1.0]);
 
   except
     on E: EMaskException do
@@ -312,6 +316,17 @@ begin
       if (FindCmdLineSwitch('exclude', Filter, True, [clstValueAppended])) and (Filter <> '') then
         FilterModules(DebugInfo, Filter, False);
 
+      if (DebugInfoLogLevel <= lcInfo) then
+      begin
+        var SymbolCount := 0;
+        var LineCount := 0;
+        for var Module in DebugInfo.Modules do
+        begin
+          Inc(SymbolCount, Module.Symbols.Count);
+          Inc(LineCount, Module.SourceLines.Count);
+        end;
+        Logger.Info('Collected %.0n modules, %.0n symbols, %.0n lines, %.0n source files', [DebugInfo.Modules.Count * 1.0, SymbolCount * 1.0, LineCount * 1.0, DebugInfo.SourceFiles.Count * 1.0]);
+      end;
 
       (*
       ** Write target file
