@@ -854,10 +854,16 @@ begin
   // size can be smaller than the current position in which case we will
   // need to move the position back and write something to actually
   // expand then stream.
-  if (Expand) and (FStream.Position > FStreamSize) then
+  // Note that we're testing against the real stream size here. Not the
+  // cached one.
+  if (Expand) then
   begin
-    Assert(FStreamSize - FStream.Position < FBlockSize);
-    FStream.Position := FStreamSize;
+    FStreamSize := FStream.Size;
+    if (FStream.Position > FStream.Size) then
+    begin
+      Assert(FStreamSize - FStream.Position < FBlockSize);
+      FStream.Position := FStreamSize;
+    end;
   end;
 
   var Padding := FBlockSize - (FStream.Position and (FBlockSize-1));
