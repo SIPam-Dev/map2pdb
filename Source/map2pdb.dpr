@@ -35,7 +35,8 @@ uses
   debug.info.reader in 'debug.info.reader.pas',
   debug.info.pdb.bind in 'debug.info.pdb.bind.pas',
   debug.info.msf in 'debug.info.msf.pas',
-  debug.info.log in 'debug.info.log.pas';
+  debug.info.log in 'debug.info.log.pas',
+  debug.info.progress in 'debug.info.progress.pas';
 
 var
   Logger: IDebugInfoModuleLogger;
@@ -124,10 +125,17 @@ begin
     var CountExcluded := 0;
 
     var Masks := TObjectList<TMask>.Create;
+    var Segments := TList<Word>.Create;
     try
       Masks.Capacity := Length(MaskValues);
       for var MaskValue in MaskValues do
-        Masks.Add(TMask.Create(MaskValue));
+      begin
+        var Segment: integer;
+        if (MaskValue.Length = 4) and (TryStrToInt('$'+MaskValue, Segment)) and (Segment <= $FFFF) then
+          Segments.Add(Segment)
+        else
+          Masks.Add(TMask.Create(MaskValue));
+      end;
 
       for var i := DebugInfo.Modules.Count-1 downto 0 do
       begin
@@ -140,6 +148,14 @@ begin
             KeepIt := Include;
             break;
           end;
+
+        if (KeepIt = not Include) then
+          for var Segment in Segments do
+            if (Module.Segment.Index = Segment) then
+            begin
+              KeepIt := Include;
+              break;
+            end;
 
         if (not KeepIt) then
         begin
@@ -157,6 +173,7 @@ begin
         end;
       end;
     finally
+      Segments.Free;
       Masks.Free;
     end;
 
@@ -286,14 +303,14 @@ begin
       *)
 
       // Eliminate modules that doesn't satisfy include filter
-      var ModuleFilter := ''; // Include everything by default
-      if (FindCmdLineSwitch('include', ModuleFilter, True, [clstValueAppended])) and (ModuleFilter <> '') then
-        FilterModules(DebugInfo, ModuleFilter, True);
+      var Filter := ''; // Include everything by default
+      if (FindCmdLineSwitch('include', Filter, True, [clstValueAppended])) and (Filter <> '') then
+        FilterModules(DebugInfo, Filter, True);
 
       // Eliminate modules that satisfies exclude filter
-      ModuleFilter := ''; // Exclude nothing by default
-      if (FindCmdLineSwitch('exclude', ModuleFilter, True, [clstValueAppended])) and (ModuleFilter <> '') then
-        FilterModules(DebugInfo, ModuleFilter, False);
+      Filter := ''; // Exclude nothing by default
+      if (FindCmdLineSwitch('exclude', Filter, True, [clstValueAppended])) and (Filter <> '') then
+        FilterModules(DebugInfo, Filter, False);
 
 
       (*
