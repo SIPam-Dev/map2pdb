@@ -1274,10 +1274,10 @@ var
         var SymA: PPublicSym32ex := @RecordsAccess^[A];
         var SymB: PPublicSym32ex := @RecordsAccess^[B];
 
-        Result := integer(SymA.Symbol.Module.Segment.Index) - integer(SymB.Symbol.Module.Segment.Index);
+        Result := integer(SymA.PublicSym32.Segment) - integer(SymB.PublicSym32.Segment);
 
         if (Result = 0) then
-          Result := integer(SymA.Symbol.Offset) - integer(SymB.Symbol.Offset);
+          Result := integer(SymA.PublicSym32.Offset) - integer(SymB.PublicSym32.Offset);
 
         if (Result = 0) then
           Result := System.AnsiStrings.CompareStr(SymA.Name, SymB.Name);
