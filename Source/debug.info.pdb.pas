@@ -128,8 +128,22 @@ type
 *)
 
 const
-  // From https://github.com/Microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp
-  IPHR_HASH = 4096;
+  // See https://github.com/Microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp, line 24-26
+  // LLVM has IPHR_HASH hardcoded to 4096 which causes massive hash collisions with anything
+  // but the smallest projects. The MS source determines the value based on the presence of
+  // the MinimalDebugInfo PDB feature flag.
+  //
+  // Hash tables built with IPHR_HASH_MINIMAL can be read by CVDUMP as the MS implementation
+  // calculates the size of the hash table from the size of the data being read. llvm-pdbutil
+  // on the other hand is hardcoded to only handle hash tables with a size of 4096 buckets so
+  // any other size can not be handled by llvm-pdbutil. This is clearly a bug in LLVM.
+  //
+  // Additionally, even though VTune uses msdia140.dll to read the pdb it also does not appear
+  // to handle hash table sizes other than 4096 as it fails to resolve source files with other
+  // hash table sizes. It has not been determined if this is because of the hash table size or
+  // if it is the larger size requires some flag set somewhere in the pdb file.
+  IPHR_HASH             = 4096;
+  IPHR_HASH_MINIMAL     = $3FFFF; // Use this size together with PDBRawFeatureSig.MinimalDebugInfo feature code
 
 //
 // Fixed stream indices

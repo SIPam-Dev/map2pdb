@@ -35,6 +35,7 @@ interface
 {$SCOPEDENUMS ON}
 
 {-$define EMIT_S_GPROC32}        // Define to emit module symbols as S_GPROC32 records in module stream
+{-$define PDB_Minimal_Debug}     // Define to write large GSI hash tables, suitable for anything but the smallest projects.
 
 uses
   System.Generics.Collections,
@@ -417,7 +418,7 @@ begin
       begin
         Result.Writer.Write(Cardinal(NameOffsets[Index]));
         Result.Writer.Write(Cardinal(FNamedStreams[Index].Stream.Index));
-      end else
+      end;
       // Empty buckets are not written. See note at top.
       {
       begin
@@ -426,11 +427,23 @@ begin
       end;
       }
     end;
+
     // Write extra DWORD. See note at top.
+    // This will be considered one of the feature codes by the reader and
+    // then ignored as it isn't a known feature code. We only write it to
+    // produce output similar to LLVM.
     Result.Writer.Write(Cardinal(0));
 
-    // PDB Feature Code(s)
+    // A list of PDB Feature Code(s) from the PDBRawFeatureSig enum.
+    // See PDB1::loadPdbStream in the MS source:
+    // https://github.com/Microsoft/microsoft-pdb/blob/master/PDB/dbi/pdb.cpp, line 1165-
+
+{$ifdef PDB_Minimal_Debug}
+    Result.Writer.Write(Cardinal(Ord(PDBRawFeatureSig.MinimalDebugInfo)));
+    Result.Writer.Write(Cardinal(Ord(PDBRawFeatureSig.VC140)));
+{$else PDB_Minimal_Debug}
     Result.Writer.Write(Cardinal(Ord(PDBRawFeatureSig.VC110)));
+{$endif PDB_Minimal_Debug}
 
   end;
   Result.EndStream;
@@ -886,7 +899,11 @@ type
     Symbol: TDebugInfoSymbol;
     Name: AnsiString;
     SymOffset: Cardinal;        // Offset of the symbol record in the publics stream.
+{$ifdef PDB_Minimal_Debug}
+    BucketIndex: Cardinal;      // GSI hash table bucket index. The maximum value is IPHR_HASH_MINIMAL.
+{$else PDB_Minimal_Debug}
     BucketIndex: Word;          // GSI hash table bucket index. The maximum value is IPHR_HASH.
+{$endif PDB_Minimal_Debug}
   end;
 
   TPublicSymArray = TArray<TPublicSym32ex>;
@@ -895,18 +912,25 @@ type
 
 type
   TGSIHashStreamBuilder = record
+  strict private
+    const
+{$ifdef PDB_Minimal_Debug}
+      GSIHashSize = IPHR_HASH_MINIMAL;
+{$else PDB_Minimal_Debug}
+      GSIHashSize = IPHR_HASH;
+{$endif PDB_Minimal_Debug}
   strict private type
-    // The hash bitmap has |ceil(IPHR_HASH/32)+ 1| slots in it, a slot being 32
-    // bits. The reference implementation builds a hash table with IPHR_HASH
+    // The hash bitmap has |ceil((GSIHashSize+1)/32)| slots in it, a slot being
+    // 32 bits. The reference implementation builds a hash table with GSIHashSize
     // buckets in it.
     // The last bucket is used to link together free hash table cells in a linked
     // list, but it is always empty in the compressed, on-disk format. However,
     // the bitmap must have a bit for it.
-    THashBitmap = array[0..(IPHR_HASH + 32) div 32-1] of Cardinal;
+    THashBitmap = array[0..(GSIHashSize+31+1) div 32-1] of Cardinal; // +31 for the ceil, +1 for the empty slot
 
     THashRecords = TArray<TPSHashRecord>;
 
-    TBuckets = array[0..IPHR_HASH] of Cardinal;
+    TBuckets = array[0..GSIHashSize] of Cardinal;
 
   public
     HashRecords: THashRecords;
@@ -952,7 +976,7 @@ begin
   if (GSIHashHeader.HrSize > 0) then // See note in CalculateSerializedLength about why this condition needs to be here
   begin
     Writer.Write<THashBitmap>(HashBitmap);
-    Assert(SizeOf(HashBitmap) = AlignTo(IPHR_HASH + 1, 32) div 8); // IPHR_HASH = size in bits, +1 for the extra empty bucket
+    Assert(SizeOf(HashBitmap) = AlignTo(GSIHashSize + 1, 32) div 8); // GSIHashSize = size in bits, +1 for the extra empty bucket
 
 
     // Emit bucket offsets
@@ -979,9 +1003,10 @@ begin
   Result := SizeOf(TGSIHashHeader);
 
   // The LLVM implementation does not contain the conditional below; It includes the
-  // SizeOf(HashBitmap) in the result even when Length(HashRecords)=0. This will however
-  // cause the LLVM PDB reader to fail with a "Corrupted publics stream." error if the
-  // Publics stream is saved with no symbols (which is legal).
+  // SizeOf(HashBitmap) in the result even when Length(HashRecords)=0 (as does the MS
+  // reference implementation). This will however cause the LLVM PDB reader to fail
+  // with a "Corrupted publics stream." error if the Publics stream is saved with no
+  // symbols (which is legal).
   if (Length(HashRecords) > 0) then
     Result := Result + Cardinal(
       Length(HashRecords) * SizeOf(TPSHashRecord) +
@@ -992,8 +1017,10 @@ end;
 procedure TGSIHashStreamBuilder.BuildBuckets(RecordZeroOffset: Cardinal; var Records: TPublicSymArray; const Logger: IDebugInfoModuleLogger);
 type
   TBucketChain = TArray<integer>;
-  THashTable = array[0..IPHR_HASH-1] of TBucketChain;
-  TChainLength = array[0..IPHR_HASH-1] of integer;
+  THashTable = array[0..GSIHashSize-1] of TBucketChain;
+  PHashTable = ^THashTable;
+  TChainLength = array[0..GSIHashSize-1] of integer;
+  PChainLength = ^TChainLength;
 begin
 
   // The reference implementation is GSI1::fWriteHash
@@ -1002,126 +1029,146 @@ begin
 
   // Precompute all hash keys.
   for var Index := 0 to High(Records) do
-    Records[Index].BucketIndex := HashStringV1(Records[Index].Name) mod IPHR_HASH;
+    Records[Index].BucketIndex := HashStringV1(Records[Index].Name) mod GSIHashSize;
 
-  // Find the size of each bucket chain...
-  var ChainLength := Default(TChainLength);
-  for var Index := 0 to High(Records) do
-    Inc(ChainLength[Records[Index].BucketIndex]);
+  var HashTable: PHashTable;
+  New(HashTable); // Use heap because array is too large for stack if we use the large hash table size
+  try
 
-  // ...and then allocate the chains
-  var HashTable := Default(THashTable);
-  for var Index := 0 to High(ChainLength) do
-    SetLength(HashTable[Index], ChainLength[Index]);
+    var ChainLength: PChainLength;
+    New(ChainLength);
+    try
+      ChainLength^ := Default(TChainLength);
 
+      // Find the size of each bucket chain...
+      for var Index := 0 to High(Records) do
+        Inc(ChainLength[Records[Index].BucketIndex]);
 
-  // Populate hash table with Records indices
-  for var Index := 0 to High(Records) do
-  begin
-    var Bucket := Records[Index].BucketIndex;
-
-    // We reuse ChainLength[Bucket] as a chain index which means that
-    // we fill the chain from the end.
-    HashTable[Bucket][ChainLength[Bucket]-1] := Index;
-
-    Dec(ChainLength[Bucket]);
-  end;
+      // ...and then allocate the chains
+      for var Index := 0 to High(ChainLength^) do
+        SetLength(HashTable[Index], ChainLength^[Index]);
 
 
-  // Local var so we can access the param in the comparer
-  var RecordsAccess: PPublicSymArray := @Records;
+      // Populate hash table with Records indices
+      for var Index := 0 to High(Records) do
+      begin
+        var Bucket := Records[Index].BucketIndex;
 
-  // Within the bucket chains, sort each bucket by memcmp of the symbol's name.
-  // It's important that we use the same sorting algorithm as is used by the
-  // reference implementation to ensure that the search for a record within a
-  // bucket can properly early-out when it detects the record won't be found.
-  // The algorithm used here corresponds to the function
-  // caseInsensitiveComparePchPchCchCch in the reference implementation.
-  var Comparer := IComparer<integer>(
-    function(const A, B: integer): integer
-    begin
-      // Pointers to records in order to avoid invoking a copy of the record
-      var L: PPublicSym32ex := @RecordsAccess^[A];
-      var R: PPublicSym32ex := @RecordsAccess^[B];
+        // We reuse ChainLength[Bucket] as a chain index which means that
+        // we fill the chain from the end (not that it matters).
+        HashTable[Bucket][ChainLength[Bucket]-1] := Index;
 
-      Result := GsiRecordCmp(L.Name, R.Name);
+        Dec(ChainLength[Bucket]);
+      end;
 
-      // This comparison is necessary to make the sorting stable in the presence
-      // of two static globals with the same name.
-      if (Result = 0) then
-        Result :=  integer(L.SymOffset) - integer(R.SymOffset);
-    end);
-
-  var ChainCount := 0;
-  var Collisions := 0;
-  for var Index := 0 to High(HashTable) do
-  begin
-    if (Length(HashTable[Index]) = 0) then
-      continue;
-
-    TArray.Sort<integer>(HashTable[Index], Comparer);
-
-    // Count number of chains while we're at it
-    Inc(ChainCount);
-    Inc(Collisions, Length(HashTable[Index])-1);
-  end;
-
-
-  if (DebugInfoLogLevel <= lcDebug) then
-  begin
-    var CollisionPercent: Double;
-    var AverageChain: Double;
-    if (Length(Records) > 0) then
-    begin
-      CollisionPercent := Collisions / Length(Records) * 100;
-      AverageChain := Length(Records) / ChainCount;
-    end else
-    begin
-      CollisionPercent := 0;
-      AverageChain := 0;
+    finally
+      Dispose(ChainLength);
     end;
-    Logger.Debug('GSI hash table. Fill factor: %.1n%%, Collisions: %.1n%%, Average chain: %.1n', [ChainCount / IPHR_HASH * 100, CollisionPercent, AverageChain]);
-  end;
 
-  // Place symbols into the hash table in bucket order. This flattens the hash
-  // structure to a sequential list of items with all empty buckets removed.
-  SetLength(HashRecords, Length(Records));
-  SetLength(BucketOffsets, ChainCount);
-  HashBitmap := Default(THashBitmap);
-  var BucketCursor := 0;
-  var BucketOffsetIndex := 0;
-  var ChainStartOff: Cardinal := 0;
-  const SizeOfHROffsetCalc = 12; // SizeOf(HROffsetCalc)
-  for var BucketIndex := 0 to High(HashTable) do
-  begin
-    if (Length(HashTable[BucketIndex]) = 0) then
-      continue;
 
-    // Calculate what the offset of the first hash record in the chain would
-    // be if it were inflated to contain 32-bit pointers. On a 32-bit system,
-    // each record would be 12 bytes. See HROffsetCalc in gsi.h.
-    BucketOffsets[BucketOffsetIndex] := ChainStartOff;
-    Inc(BucketOffsetIndex);
+    // Local var so we can access the param in the comparer
+    var RecordsAccess: PPublicSymArray := @Records;
 
-    // Mark bucket in bitmap
-    var BitmapRow := BucketIndex div 32;
-    var BitmapBit := BucketIndex mod 32;
-    HashBitmap[BitmapRow] := HashBitmap[BitmapRow] or (1 shl BitmapBit);
+    // Within the bucket chains, sort each bucket by memcmp of the symbol's name.
+    // It's important that we use the same sorting algorithm as is used by the
+    // reference implementation to ensure that the search for a record within a
+    // bucket can properly early-out when it detects the record won't be found.
+    // The algorithm used here corresponds to the function
+    // caseInsensitiveComparePchPchCchCch in the reference implementation.
+    // See https://github.com/Microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp, line 401
+    var Comparer := IComparer<integer>(
+      function(const A, B: integer): integer
+      begin
+        // Pointers to records in order to avoid invoking a copy of the record
+        var L: PPublicSym32ex := @RecordsAccess^[A];
+        var R: PPublicSym32ex := @RecordsAccess^[B];
 
-    for var ChainIndex := 0 to High(HashTable[BucketIndex]) do
+        Result := GsiRecordCmp(L.Name, R.Name);
+
+        // This comparison is necessary to make the sorting stable in the presence
+        // of two static globals with the same name.
+        if (Result = 0) then
+          Result :=  integer(L.SymOffset) - integer(R.SymOffset);
+      end);
+
+    var ChainCount := 0;
+    var MaxChainSize := 0;
+    var Collisions := 0;
+    for var Index := 0 to High(HashTable^) do
     begin
-      var Index := HashTable[BucketIndex][ChainIndex];
+      if (Length(HashTable[Index]) = 0) then
+        continue;
 
-      // The reference implementation states:
-      //   "ptrs in the stream are offsets biased by one to distinguish null ptrs/offsets"
-      //   https://github.com/microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp#L1979
-      // As far as I can see LLVM doesn't do this on write but accounts for it on read.
-      HashRecords[BucketCursor].Off := Records[Index].SymOffset + 1;
-      HashRecords[BucketCursor].CRef := 1; // Always use a refcount of one for now.
+      TArray.Sort<integer>(HashTable[Index], Comparer);
 
-      Inc(BucketCursor);
-      Inc(ChainStartOff, SizeOfHROffsetCalc);
+      // Count number of chains while we're at it
+      Inc(ChainCount);
+      Inc(Collisions, Length(HashTable[Index])-1);
+      MaxChainSize := Max(MaxChainSize, Length(HashTable[Index]));
     end;
+
+
+    if (DebugInfoLogLevel <= lcDebug) then
+    begin
+      var CollisionPercent: Double;
+      var AverageChain: Double;
+      if (Length(Records) > 0) then
+      begin
+        CollisionPercent := Collisions / Length(Records) * 100;
+        AverageChain := Length(Records) / ChainCount;
+      end else
+      begin
+        CollisionPercent := 0;
+        AverageChain := 0;
+      end;
+      Logger.Debug('GSI hash table. Size: %.0n, Fill factor: %.1n%%, Collisions: %.1n%%, Average chain: %.1n, Max chain: %.0n',
+        [GSIHashSize * 1.0, ChainCount / GSIHashSize * 100, CollisionPercent, AverageChain, MaxChainSize * 1.0]);
+    end;
+
+    // Place symbols into the hash table in bucket order. This flattens the hash
+    // structure to a sequential list of items with all empty buckets removed.
+    SetLength(HashRecords, Length(Records));
+    SetLength(BucketOffsets, ChainCount);
+    HashBitmap := Default(THashBitmap);
+    var BucketCursor := 0;
+    var BucketOffsetIndex := 0;
+    var ChainStartOff: Cardinal := 0;
+    const SizeOfHROffsetCalc = 12; // SizeOf(HROffsetCalc)
+    for var BucketIndex := 0 to High(HashTable^) do
+    begin
+      if (Length(HashTable[BucketIndex]) = 0) then
+        continue;
+
+      // Calculate what the offset of the first hash record in the chain would
+      // be if it were inflated to contain 32-bit pointers. On a 32-bit system,
+      // each record would be 12 bytes. See HROffsetCalc in gsi.h.
+      BucketOffsets[BucketOffsetIndex] := ChainStartOff;
+      Inc(BucketOffsetIndex);
+
+      // Mark bucket in bitmap
+      var BitmapRow := BucketIndex div 32;
+      var BitmapBit := BucketIndex mod 32;
+      HashBitmap[BitmapRow] := HashBitmap[BitmapRow] or (1 shl BitmapBit);
+
+      for var ChainIndex := 0 to High(HashTable[BucketIndex]) do
+      begin
+        var Index := HashTable[BucketIndex][ChainIndex];
+
+        // The reference implementation states:
+        //   "ptrs in the stream are offsets biased by one to distinguish null ptrs/offsets"
+        //   https://github.com/microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp#L1979
+        // As far as I can see LLVM doesn't do this on write but accounts for it on read.
+        HashRecords[BucketCursor].Off := Records[Index].SymOffset + 1;
+        HashRecords[BucketCursor].CRef := 1; // Always use a refcount of one for now.
+
+        Inc(BucketCursor);
+        Inc(ChainStartOff, SizeOfHROffsetCalc);
+      end;
+    end;
+
+
+  finally
+    Dispose(HashTable);
   end;
 end;
 
@@ -1532,7 +1579,6 @@ var
     Writer.PadToAligment(4);
     Assert(Symbol.Header.RecordLen+SizeOf(Symbol.Header.RecordLen) <= CVMaxRecordLength);
 
-
     Assert(Symbol.OffsetEnd = Writer.Position-StartOffset+SizeOf(TCVTypeRecordHeader));
   end;
 
@@ -1887,7 +1933,7 @@ begin
 
   Result := Writer.Position;
 
-  // Each source file and its lines
+  // Each source file of the module
   for var SourceFile in Module.SourceFiles do
     EmitSourceFileChecksum(SourceFile);
 
