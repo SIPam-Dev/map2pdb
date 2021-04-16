@@ -35,8 +35,7 @@ uses
   debug.info.reader in 'debug.info.reader.pas',
   debug.info.pdb.bind in 'debug.info.pdb.bind.pas',
   debug.info.msf in 'debug.info.msf.pas',
-  debug.info.log in 'debug.info.log.pas',
-  debug.info.progress in 'debug.info.progress.pas';
+  debug.info.log in 'debug.info.log.pas';
 
 var
   Logger: IDebugInfoModuleLogger;
