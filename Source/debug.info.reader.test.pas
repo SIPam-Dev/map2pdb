@@ -47,7 +47,7 @@ begin
 //  Segment.Offset := $00171717;
 //  Segment.Size := $00272727;
 
-  var Segment := DebugInfo.Segments.Add(1, sctCODE, '.text');
+  var Segment := DebugInfo.Segments.Add(1, '.text', sctCODE);
   Segment.Offset := $00474747;
   Segment.Size := 123456;
 

@@ -1357,6 +1357,10 @@ var
   begin
     var Symbols := TList<TDebugInfoSymbol>.Create;
     try
+      var Capacity := 0;
+      for var Module in FDebugInfo.Modules do
+        Inc(Capacity, Module.Symbols.Count);
+      Symbols.Capacity := Capacity;
 
       // Create a list of symbols and sort it.
       // This also gives us the symbol count so we can preallocate the symbol array.

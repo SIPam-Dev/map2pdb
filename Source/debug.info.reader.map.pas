@@ -330,7 +330,8 @@ begin
       if (ClassName.IsEmpty) then
         LineLogger.Error(Reader.LineNumber, 'Invalid segment class name'#13#10'%s', [Reader.LineBuffer]);
 
-      var Segment := DebugInfo.Segments.Add(SegmentID, ClassName, Name);
+      var SegmentClass := TDebugInfoSegment.GuessClassType(ClassName);
+      var Segment := DebugInfo.Segments.Add(SegmentID, Name, SegmentClass);
 
       Segment.Offset := Offset;
       Segment.Size := Size;

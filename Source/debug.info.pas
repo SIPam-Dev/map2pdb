@@ -24,13 +24,25 @@ type
   TDebugInfoModule = class;
 
 
-  TDebugInfoSegmentClass = (sctCODE, sctICODE, sctDATA, sctBSS, sctTLS, sctPDATA);
+  TDebugInfoSegmentClass = (
+    sctCODE,            // Code
+    sctICODE,           // Initialization code
+    sctDATA,            // Data
+    sctIDATA,           // Import data
+    sctEDATA,           // Export data
+    sctRSRC,            // Resource data
+    sctTLS,             // Thread Local Storage data
+    sctDEBUG            // Debug data
+  );
+  //
+  // The predefined sections are:
+  //   .text, .bss, .rdata, .data, .rsrc, .edata, .idata, .pdata and .debug
+  // The names however are not significant.
+  //
 
   TDebugInfoSegments = class;
 
   TDebugInfoSegment = class
-  private const
-    sClassNames: array[TDebugInfoSegmentClass] of string = ('CODE', 'ICODE', 'DATA', 'BSS', 'TLS', 'PDATA');
   private
     FOwner: TDebugInfoSegments;
     FSegClassType: TDebugInfoSegmentClass;
@@ -42,18 +54,15 @@ type
   private
     procedure CheckOverlap;
   protected
-    function GetSegClassName: string;
     procedure SetOffset(const Value: TDebugInfoOffset);
     procedure SetSize(const Value: TDebugInfoOffset);
   public
-    constructor Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; const AClassName: string); overload;
-    constructor Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; AClassType: TDebugInfoSegmentClass); overload;
+    constructor Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; const AName: string; AClassType: TDebugInfoSegmentClass = sctDATA); overload;
 
-    class function ClassNameToClassType(const AClassName: string): TDebugInfoSegmentClass;
+    class function GuessClassType(const AName: string): TDebugInfoSegmentClass;
 
     property Index: Cardinal read FIndex; // 1 based value
     property SegClassType: TDebugInfoSegmentClass read FSegClassType;
-    property SegClassName: string read GetSegClassName;
     property Name: string read FName write FName;
     property Offset: TDebugInfoOffset read FOffset write SetOffset;
     property Size: TDebugInfoOffset read FSize write SetSize;
@@ -71,11 +80,9 @@ type
     constructor Create;
     destructor Destroy; override;
 
-    function Add(AIndex: Cardinal; AClassType: TDebugInfoSegmentClass; const AName: string): TDebugInfoSegment; overload;
-    function Add(AIndex: Cardinal; const AClassName: string; const AName: string): TDebugInfoSegment; overload;
+    function Add(AIndex: Cardinal; const AName: string; AClassType: TDebugInfoSegmentClass = sctDATA): TDebugInfoSegment;
     function FindByIndex(AIndex: Cardinal): TDebugInfoSegment;
     function FindByName(const AName: string): TDebugInfoSegment;
-    function FindByClassType(AClassType: TDebugInfoSegmentClass): TDebugInfoSegment;
     function FindByOffset(AOffset: TDebugInfoOffset): TDebugInfoSegment;
 
     property Count: integer read GetCount;
@@ -588,14 +595,7 @@ begin
   inherited;
 end;
 
-function TDebugInfoSegments.Add(AIndex: Cardinal; const AClassName: string; const AName: string): TDebugInfoSegment;
-begin
-  var SegClassType := TDebugInfoSegment.ClassNameToClassType(AClassName);
-
-  Result := Add(AIndex, SegClassType, AName);
-end;
-
-function TDebugInfoSegments.Add(AIndex: Cardinal; AClassType: TDebugInfoSegmentClass; const AName: string): TDebugInfoSegment;
+function TDebugInfoSegments.Add(AIndex: Cardinal; const AName: string; AClassType: TDebugInfoSegmentClass): TDebugInfoSegment;
 begin
   if (AIndex = 0) then
     raise Exception.Create('Invalid Segment index');
@@ -613,8 +613,7 @@ begin
   end else
     FSegments.Count := ListIndex+1;
 
-  Result := TDebugInfoSegment.Create(Self, AIndex, AClassType);
-  Result.Name := AName;
+  Result := TDebugInfoSegment.Create(Self, AIndex, AName, AClassType);
 
   FSegments[ListIndex] := Result;
   FNames.Add(AName, Result);
@@ -657,15 +656,6 @@ begin
     raise Exception.CreateFmt('Segment index %d does not exist', [AIndex]);
 end;
 
-function TDebugInfoSegments.FindByClassType(AClassType: TDebugInfoSegmentClass): TDebugInfoSegment;
-begin
-  for Result in FSegments do
-    if (Result.SegClassType = AClassType) then
-      Exit;
-
-  Result := nil;
-end;
-
 function TDebugInfoSegments.FindByOffset(AOffset: TDebugInfoOffset): TDebugInfoSegment;
 begin
   for Result in FSegments do
@@ -677,12 +667,13 @@ end;
 
 { TDebugInfoSegment }
 
-constructor TDebugInfoSegment.Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; AClassType: TDebugInfoSegmentClass);
+constructor TDebugInfoSegment.Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; const AName: string; AClassType: TDebugInfoSegmentClass);
 begin
   inherited Create;
 
   FOwner := AOwner;
   FIndex := AIndex;
+  FName := AName;
   FSegClassType := AClassType;
 
   FCharacteristics := IMAGE_SCN_MEM_READ;
@@ -690,15 +681,26 @@ begin
     FCharacteristics := FCharacteristics or IMAGE_SCN_MEM_EXECUTE or IMAGE_SCN_CNT_CODE;
 end;
 
-constructor TDebugInfoSegment.Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; const AClassName: string);
+class function TDebugInfoSegment.GuessClassType(const AName: string): TDebugInfoSegmentClass;
+type
+  TSectionName = record
+    Name: string;
+    SegmentClass: TDebugInfoSegmentClass;
+  end;
+const
+  CommonNames: array[0..5] of TSectionName = (
+    (Name: 'CODE';      SegmentClass: sctCODE),
+    (Name: 'ICODE';     SegmentClass: sctICODE),
+    (Name: 'DATA';      SegmentClass: sctDATA),
+    (Name: 'BSS';       SegmentClass: sctDATA),
+    (Name: 'PDATA';     SegmentClass: sctDATA),
+    (Name: 'TLS';       SegmentClass: sctTLS)
+  );
 begin
-  var SegClassType := ClassNameToClassType(AClassName);
-  Create(AOwner, AIndex, SegClassType);
-end;
-
-function TDebugInfoSegment.GetSegClassName: string;
-begin
-  Result := sClassNames[FSegClassType];
+  for var i := 0 to High(CommonNames) do
+    if (SameText(CommonNames[i].Name, AName)) then
+      Exit(CommonNames[i].SegmentClass);
+  Result := sctDATA;
 end;
 
 procedure TDebugInfoSegment.SetOffset(const Value: TDebugInfoOffset);
@@ -729,15 +731,6 @@ begin
       ((Offset <= Segment.Offset) and (Offset+Size > Segment.Offset)) then // Other is within range
       raise Exception.Create('Overlapping segments');
   end;
-end;
-
-class function TDebugInfoSegment.ClassNameToClassType(const AClassName: string): TDebugInfoSegmentClass;
-begin
-  for var SegClassType := Low(TDebugInfoSegmentClass) to High(TDebugInfoSegmentClass) do
-    if (AClassName = sClassNames[SegClassType]) then
-      Exit(SegClassType);
-
-  raise Exception.CreateFmt('Unknown Segment Class: %s', [AClassName]);
 end;
 
 { TDebugInfoSourceFile }

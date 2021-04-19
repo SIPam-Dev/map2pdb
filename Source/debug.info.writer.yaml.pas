@@ -126,7 +126,7 @@ begin
             continue;
 
           // Skip module if it doesn't contain code
-          if (not (Module.Segment.SegClassType in [sctCODE, sctICODE])) then
+          if (Module.Segment.SegClassType <> sctCODE) then
             continue;
 
           Logger.Info(Format('- Module: %s', [Module.Name]));
@@ -308,12 +308,8 @@ begin
               end;
               EndBlock;
 
-              for var SegClassType := Low(TDebugInfoSegmentClass) to High(TDebugInfoSegmentClass) do
+              for var Segment in DebugInfo.Segments do
               begin
-                var Segment := DebugInfo.Segments.FindByClassType(SegClassType);
-                if (Segment = nil) then
-                  continue;
-
                 BeginBlock('- Kind: S_SECTION');
                 begin
                   BeginBlock('SectionSym:');
