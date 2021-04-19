@@ -62,7 +62,7 @@ end;
 procedure DisplayBanner;
 begin
   Writeln('map2pdb - Copyright (c) 2021 Anders Melander');
-  Writeln('Version 2.5');
+  Writeln('Version 2.6');
   Writeln;
 end;
 
@@ -80,13 +80,13 @@ begin
   Writeln('  -pdb[:<output-filename>]   Writes a PDB file (default)');
   Writeln('  -yaml[:<output-filename>]  Writes an YAML file that can be used with');
   Writeln('                             llvm-pdbutil');
-  Writeln('  -bind[:<exe-filename>]     Patches a Delphi compiled exe/dll file to include');
+  Writeln('  -bind[:<filename>]         Patches the specified exe/dll file to include');
   Writeln('                             a reference to the pdb file');
   Writeln('  -include:<filenames>       Include the specified list of modules in the pdb');
   Writeln('                             (semicolor separated list, wildcards supported)');
   Writeln('  -exclude:<filenames>       Exclude the specified list of modules from the pdb');
   Writeln('                             (semicolor separated list, wildcards supported)');
-  Writeln('  -test                      Works on test data. Ignores the input file');
+  Writeln('  -pause                     prompt after completion');
   Writeln;
   Writeln('Examples:');
   Writeln;
