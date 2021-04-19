@@ -1355,45 +1355,20 @@ var
 
   procedure LoadSymbols;
   begin
-    var Symbols := TList<TDebugInfoSymbol>.Create;
-    try
-      var Capacity := 0;
-      for var Module in FDebugInfo.Modules do
-        Inc(Capacity, Module.Symbols.Count);
-      Symbols.Capacity := Capacity;
+    var Count := 0;
+    for var Module in FDebugInfo.Modules do
+      Inc(Count, Module.Symbols.Count);
 
-      // Create a list of symbols and sort it.
-      // This also gives us the symbol count so we can preallocate the symbol array.
-      for var Module in FDebugInfo.Modules do
-      begin
-        Module.Symbols.CalculateSizes;
+    SetLength(Publics, Count);
 
-        for var Symbol in Module.Symbols do
-          if (Symbol.Size > 0) then
-            Symbols.Add(Symbol);
-      end;
-      SetLength(Publics, Symbols.Count);
-
-      Symbols.Sort(IComparer<TDebugInfoSymbol>(
-        function(const A, B: TDebugInfoSymbol): integer
-        begin
-          // MS appears to sort by address or segment+offset - not by name
-          Result := integer(A.Module.Segment.Index) - integer(B.Module.Segment.Index);
-
-          if (Result = 0) then
-            Result := integer(A.Module.Offset + A.Offset) - integer(B.Module.Offset + B.Offset);
-
-          if (Result = 0) then
-            Result := CompareStr(A.Name, B.Name);
-        end));
-
-      // Populate symbol array
-      var Index := 0;
-      for var Symbol in Symbols do
+    // Populate symbol array
+    var Index := 0;
+    for var Module in FDebugInfo.Modules do
+      for var Symbol in Module.Symbols do
       begin
         Publics[Index].PublicSym32.Header.RecordKind := Ord(CVSymbolRecordKind.S_PUB32);
-        Publics[Index].PublicSym32.Segment := Symbol.Module.Segment.Index;
-        Publics[Index].PublicSym32.Offset := Symbol.Module.Offset + Symbol.Offset; // Make offset relative to segment
+        Publics[Index].PublicSym32.Segment := Module.Segment.Index;
+        Publics[Index].PublicSym32.Offset := Module.Offset + Symbol.Offset; // Make offset relative to segment
         Publics[Index].PublicSym32.Flags := Ord(CVPubSymFlags.cvpsfFunction);
 
         Publics[Index].Symbol := Symbol;
@@ -1401,10 +1376,6 @@ var
 
         Inc(Index);
       end;
-
-    finally
-      Symbols.Free;
-    end;
   end;
 
 begin
@@ -1620,6 +1591,7 @@ begin
   begin
 
 {$ifdef EMIT_S_GPROC32}
+    {$message warn 'Symbol.Size has not been calculated. TDebugInfoSymbols.CalculateSizes must be called prior to this.'}
     // if S_GPROC32 symbols are emitted for all the symbols in the module, then
     // VTune will use the name specified in the S_GPROC32 symbol. Otherwise it
     // will use the S_PUB32 symbol.
