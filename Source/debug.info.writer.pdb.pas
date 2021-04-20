@@ -1321,10 +1321,12 @@ var
         var SymA: PPublicSym32ex := @RecordsAccess^[A];
         var SymB: PPublicSym32ex := @RecordsAccess^[B];
 
-        Result := integer(SymA.PublicSym32.Segment) - integer(SymB.PublicSym32.Segment);
+        Result := integer(SymA.Symbol.Module.Segment.Index) - integer(SymB.Symbol.Module.Segment.Index);
 
         if (Result = 0) then
-          Result := integer(SymA.PublicSym32.Offset) - integer(SymB.PublicSym32.Offset);
+          // Although it would make sense to order by Module.Offset+Symbol.Offset here,
+          // apparently that breaks VTune's resolver in some circumstances.
+          Result := integer(SymA.Symbol.Offset) - integer(SymB.Symbol.Offset);
 
         if (Result = 0) then
           Result := System.AnsiStrings.CompareStr(SymA.Name, SymB.Name);

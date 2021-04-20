@@ -62,7 +62,7 @@ end;
 procedure DisplayBanner;
 begin
   Writeln('map2pdb - Copyright (c) 2021 Anders Melander');
-  Writeln('Version 2.6');
+  Writeln('Version 2.6.1');
   Writeln;
 end;
 
