@@ -240,6 +240,13 @@ begin
     if (not FindParam(0, SourceFilename)) or (FindCmdLineSwitch('h')) or (FindCmdLineSwitch('?')) then
     begin
       DisplayHelp;
+
+      if (FindCmdLineSwitch('pause')) then
+      begin
+        Writeln('Press enter to continue');
+        Readln;
+      end;
+
       exit;
     end;
 
