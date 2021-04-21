@@ -8,7 +8,7 @@ Copyright (c) 2021 Anders Melander
 
 ![Profiling a Delphi application in VTune](Info/vtune_delphi.png)
 
-map2pdb is written in pure Delphi with no dependencies on other libraries or tools. Unlike other similar solutions it does not rely on the undocumented Visual Studio DLLs to build and write the PDB file.
+map2pdb is written in pure Delphi with no dependencies on other libraries or tools. Unlike other similar solutions it does not [rely on the undocumented Visual Studio DLLs](https://github.com/rainers/cv2pdb/blob/master/src/mspdb.cpp) to build and write the PDB file.
 
 ### Usage
 
@@ -35,7 +35,7 @@ The order of parameters is not significant.
 
 Filters can be used to limit the size of the produced PDB. This can be necessary either because of memory constraints or because some tools (I'm looking at you, VTune) get very slow with large PDB files.
 
-Filters are applied after the map file has been imported but before the pdb is produced. More than one filter can be specified.
+Filters are applied after the map file has been imported but before the PDB is produced. More than one filter can be specified.
 
 First the include filters are applied; Everything that doesn't satisfy the include filter is excluded from the PDB. Then the exclude filters are applied; Everything that satisfies the exclude filter is excluded from the PDB.
 
@@ -43,6 +43,7 @@ First the include filters are applied; Everything that doesn't satisfy the inclu
 
 A module filter specifies the names of modules (units in Delphi terms) to include or exclude from the PDB. Wildcards are supported and multiple filenames can be specified by separating them with semicolons.  
 For example to exclude all DevExpress units and Firedac:  
+
 ```
   -exclude:dx*;cx*;firedac.*
 ```
@@ -82,7 +83,7 @@ You enable the Detailed MAP file in your project's linker options.
 3. Give the tool a name. E.g. "map2pdb".
 4. In the "Program" field specify the complete path to the `map2pdb.exe` file.
 5. In the "Parameters" field write the following:  
-  `-pause -bind:$EXENAME $PATH($EXENAME)$NAMEONLY($EXENAME).map`
+    `-pause -bind:$EXENAME $PATH($EXENAME)$NAMEONLY($EXENAME).map`
 6. Close the dialog.
 
 You should now have a new menu item in the Tools menu. When you have compiled your project and want to generate a PDB file you can now just use this menu item to do so.
@@ -111,21 +112,30 @@ The following resources was used as references and inspiration during developmen
 #### PDB forensic tools
 
 - [llvm-pdbutil](https://llvm.org/docs/CommandGuide/llvm-pdbutil.html)  
-  Used to validate, read and (partially) write pdb files and dump the information in various formats.  
-  Unofficials downloads here: https://github.com/shaharv/llvm-pdbutil-builds/releases
+  Used to validate, read and (partially) write PDB files and dump the information in various formats.  
+  Unofficial downloads here: https://github.com/shaharv/llvm-pdbutil-builds/releases
   
 - [cvdump](https://github.com/microsoft/microsoft-pdb/tree/master/cvdump)  
-  Microsoft's cvdump utilty. Used to validate and read pdb files and dump the information in text format.
+  Microsoft's cvdump utilty. Used to validate and read PDB files and dump the information in text format.
 
 #### Tools that consume PDB files
 
 - [Intel VTune profiler](https://software.intel.com/content/www/us/en/develop/tools/oneapi/components/vtune-profiler.html)
-
 - [AMD μProf profiler](https://developer.amd.com/amd-uprof/)
-
 - [WinDbg debugger](https://docs.microsoft.com/en-us/windows-hardware/drivers/debugger/debugger-download-tools)
-
 - [OllyDbg debugger](http://www.ollydbg.de/)
+
+##### Performance problems with Intel VTune
+
+Due to a bug in the **msdia140.dll** file that comes bundled with VTune you will likely experience that VTune takes an extremely long time to resolve symbols on anything but the smallest projects.
+
+msdia140.dll implements the [Debug Interface Access SDK](https://docs.microsoft.com/en-us/visualstudio/debugger/debug-interface-access/debug-interface-access-sdk?view=vs-2019). The bug was introduced in VS2017 and supposedly fixed in VS2019 but apparently Intel hasn't caught up to that fact and new versions of VTune still comes with the old VS2017 version of msdia140.dll.
+
+To fix this problem all you have to do is replace VTune's msdia140.dll with a newer version. The file is located in the bin32 and bin64 folders under the VTune root folder. Note that the 32-bit and 64-bit files are not the same. You need to replace the file in the bin32 folder with the 32-bit version of msdia140.dll and the one in the bin64 folder with the 64-bit version.
+
+Now here's the catch; The files you need to replace are not the ones that are actually named msdia140.dll. You need to replace the ones named **amplxe_msdia140.dll**. Remember to save the old ones first in case you mess this up.
+
+If you have a newer version of VS installed you can probably find the required files somewhere on your system. I guess anything newer than version 14.10.x.x should do. You can also install the [Visual Studio Redistributable](https://visualstudio.microsoft.com/downloads/#microsoft-visual-c-redistributable-for-visual-studio-2019) and get the files from there or you can just get the two files from the [repository download section](https://bitbucket.org/anders_melander/map2pdb/downloads/).
 
 ### Building map2pdb from source
 
