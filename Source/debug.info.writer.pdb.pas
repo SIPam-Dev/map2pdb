@@ -1309,7 +1309,7 @@ var
     // Local var so we can access the param in the comparer
     var RecordsAccess: PPublicSymArray := @Records;
 
-    // Sort address map by Segment.Index, Symbol.Offset - not by Symbol.Address
+    // Sort address map by Segment.Index, Symbol.Offset, Symbol.Name
     // PSGSI1::sortBuf
     //   https://github.com/microsoft/microsoft-pdb/blob/master/PDB/dbi/gsi.cpp#L1945
     // cmpAddrMapByAddrAndName
@@ -1321,16 +1321,15 @@ var
         var SymA: PPublicSym32ex := @RecordsAccess^[A];
         var SymB: PPublicSym32ex := @RecordsAccess^[B];
 
-        Result := integer(SymA.Symbol.Module.Segment.Index) - integer(SymB.Symbol.Module.Segment.Index);
+        Result := integer(SymA.PublicSym32.Segment) - integer(SymB.PublicSym32.Segment);
 
         if (Result = 0) then
-          // Although it would make sense to order by Module.Offset+Symbol.Offset here,
-          // apparently that breaks VTune's resolver in some circumstances.
-          Result := integer(SymA.Symbol.Offset) - integer(SymB.Symbol.Offset);
+          Result := integer(SymA.PublicSym32.Offset) - integer(SymB.PublicSym32.Offset);
 
         if (Result = 0) then
           Result := System.AnsiStrings.CompareStr(SymA.Name, SymB.Name);
       end));
+
 
     // Rewrite the public symbol indices into symbol offsets.
     for var Index := 0 to High(AddressMap) do
