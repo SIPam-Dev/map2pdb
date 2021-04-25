@@ -22,7 +22,6 @@ uses
   System.IOUtils,
   System.Diagnostics,
   System.Generics.Collections,
-  System.Masks,
   System.StrUtils,
   debug.info.reader.map in 'debug.info.reader.map.pas',
   debug.info.writer.yaml in 'debug.info.writer.yaml.pas',
@@ -35,7 +34,8 @@ uses
   debug.info.reader in 'debug.info.reader.pas',
   debug.info.pdb.bind in 'debug.info.pdb.bind.pas',
   debug.info.msf in 'debug.info.msf.pas',
-  debug.info.log in 'debug.info.log.pas';
+  debug.info.log in 'debug.info.log.pas',
+  debug.info.utilities in 'debug.info.utilities.pas';
 
 var
   Logger: IDebugInfoModuleLogger;
@@ -113,83 +113,6 @@ begin
     (ms div MillisecondsPerMinute) mod 60,
     (ms div MillisecondsPerSecond) mod 60,
     (ms mod MillisecondsPerSecond)]);
-end;
-
-procedure FilterModules(DebugInfo: TDebugInfo; const ModuleFilter: string; Include: boolean);
-begin
-  try
-    var MaskValues := ModuleFilter.Split([';']);
-
-    var SymbolsIncludeEliminateCount := 0;
-    var SymbolsExcludeEliminateCount := 0;
-    var ModulesIncludeEliminateCount := 0;
-    var ModulesExcludeEliminateCount := 0;
-
-    var Masks := TObjectList<TMask>.Create;
-    var Segments := TList<Word>.Create;
-    try
-      Masks.Capacity := Length(MaskValues);
-      for var MaskValue in MaskValues do
-      begin
-        var Segment: integer;
-        if (MaskValue.Length = 4) and (TryStrToInt('$'+MaskValue, Segment)) and (Segment <= $FFFF) then
-          Segments.Add(Segment)
-        else
-          Masks.Add(TMask.Create(MaskValue));
-      end;
-
-      for var i := DebugInfo.Modules.Count-1 downto 0 do
-      begin
-        var Module := DebugInfo.Modules[i];
-        var KeepIt: boolean := not Include;
-
-        for var Mask in Masks do
-          if (Mask.Matches(Module.Name)) then
-          begin
-            KeepIt := Include;
-            break;
-          end;
-
-        if (KeepIt = not Include) then
-          for var Segment in Segments do
-            if (Module.Segment.Index = Segment) then
-            begin
-              KeepIt := Include;
-              break;
-            end;
-
-        if (not KeepIt) then
-        begin
-          if (Include) then
-          begin
-            Inc(ModulesIncludeEliminateCount);
-            Inc(SymbolsIncludeEliminateCount, Module.Symbols.Count);
-            Logger.Debug('Include filter eliminated module: %s', [Module.Name])
-          end else
-          begin
-            Inc(ModulesExcludeEliminateCount);
-            Inc(SymbolsExcludeEliminateCount, Module.Symbols.Count);
-            Logger.Debug('Exclude filter eliminated module: %s', [Module.Name]);
-          end;
-
-          DebugInfo.Modules.Remove(Module);
-        end;
-      end;
-    finally
-      Segments.Free;
-      Masks.Free;
-    end;
-
-    if (ModulesIncludeEliminateCount > 0) then
-      Logger.Info('Include filter eliminated %.0n module(s), %.0n symbol(s)', [ModulesIncludeEliminateCount * 1.0, SymbolsIncludeEliminateCount * 1.0]);
-
-    if (ModulesExcludeEliminateCount > 0) then
-      Logger.Info('Exclude filter eliminated %.0n module(s), %.0n symbols(s)', [ModulesExcludeEliminateCount * 1.0, SymbolsExcludeEliminateCount * 1.0]);
-
-  except
-    on E: EMaskException do
-      Logger.Error('Invalid filter. %s', [E.Message]);
-  end;
 end;
 
 type
@@ -315,12 +238,13 @@ begin
       // Eliminate modules that doesn't satisfy include filter
       var Filter := ''; // Include everything by default
       if (FindCmdLineSwitch('include', Filter, True, [clstValueAppended])) and (Filter <> '') then
-        FilterModules(DebugInfo, Filter, True);
+        FilterModules(DebugInfo, Filter, True, Logger);
 
       // Eliminate modules that satisfies exclude filter
       Filter := ''; // Exclude nothing by default
       if (FindCmdLineSwitch('exclude', Filter, True, [clstValueAppended])) and (Filter <> '') then
-        FilterModules(DebugInfo, Filter, False);
+        FilterModules(DebugInfo, Filter, False, Logger);
+
 
       if (DebugInfoLogLevel <= lcInfo) then
       begin
@@ -333,6 +257,14 @@ begin
         end;
         Logger.Info('Collected %.0n modules, %.0n symbols, %.0n lines, %.0n source files', [DebugInfo.Modules.Count * 1.0, SymbolCount * 1.0, LineCount * 1.0, DebugInfo.SourceFiles.Count * 1.0]);
       end;
+
+
+      (*
+      ** Validation
+      *)
+      if (DebugInfoLogLevel <= lcDebug) then
+        PostImportValidation(DebugInfo, Logger);
+
 
       (*
       ** Write target file
