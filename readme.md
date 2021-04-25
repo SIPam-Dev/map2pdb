@@ -72,9 +72,10 @@ In order for a filter to be recognized as a segment filter it must consist of 4 
   
 ### Requirements
 
-Since map2pdb uses the information in your project's MAP file to generate the PDB file, you need to link your projects with a **Detailed** map file. You do not need to compile or link with debug information but the detailed MAP file is required.
+Since map2pdb uses the information in your project's MAP file to generate the PDB file, you need to link your projects with a **Detailed** map file. You do not need to link with debug information but the detailed MAP file is required. Additionally you should compile with full **Debug Information** enabled since this controls if the MAP file will contain line number information or not.  
+None of these options will affect the final output of your compiled project; They only affect the debug information which is stored in the MAP and DCU files.
 
-You enable the Detailed MAP file in your project's linker options.
+You enable the Detailed MAP file in your project's [linker options](http://docwiki.embarcadero.com/RADStudio/Sydney/en/Linking) and the Debug information in the project's [compiler options](http://docwiki.embarcadero.com/RADStudio/Sydney/en/Compiling#Debugging_Options).
 
 ### Delphi and C++ Builder integration
 
