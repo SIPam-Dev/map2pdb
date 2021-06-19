@@ -191,23 +191,26 @@ begin
   var n := 1;
 
   // Strip module name from symbol name
-  if (Name.StartsWith(Module.Name)) then
+  if (Name.StartsWith(Module.Name)) and (Name.Length > Module.Name.Length) and (Name[Module.Name.Length+1] = '.') then
     Inc(n, Module.Name.Length+1); // +1 to get rid of the separating "."
 
 //  if (Pos('$thunk_', Name, n) = n) then
 //    Inc(n, '$thunk_'.Length);
 
-  // Types start with "."
-  if (Name[n] = '.') then
-    Exit('');
+  if (n < Name.Length) then
+  begin
+    // Types start with "."
+    if (n < Name.Length) and (Name[n] = '.') then
+      Exit('');
 
-  // Skip {module}
-  if (Name[n] = '{') then
-    n := Pos('}', Name, n+1)+1;
+    // Skip {module}
+    if (Name[n] = '{') then
+      n := Pos('}', Name, n+1)+1;
 
-  // Strip leading "@"
-  if (Name[n] = '@') then
-    Inc(n);
+    // Strip leading "@"
+    if (n < Name.Length) and (Name[n] = '@') then
+      Inc(n);
+  end;
 
   if (n > 1) then
     Result := Copy(Name, n, MaxInt)
