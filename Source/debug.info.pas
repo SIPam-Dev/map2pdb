@@ -629,9 +629,12 @@ function TDebugInfoSegments.FindByIndex(AIndex: Cardinal): TDebugInfoSegment;
 begin
   // Index is 1-based
   if (AIndex <= 0) then
-    raise Exception.Create('Invalid Segment index');
+    raise Exception.CreateFmt('Invalid Segment index: %d', [AIndex]);
 
-  Result := FSegments[AIndex - 1];
+  if (AIndex <= FSegments.Count) then
+    Result := FSegments[AIndex - 1]
+  else
+    Result := nil;
 end;
 
 function TDebugInfoSegments.GetCount: integer;
@@ -646,14 +649,10 @@ end;
 
 function TDebugInfoSegments.GetSegment(AIndex: Cardinal): TDebugInfoSegment;
 begin
-  // Index is 1-based
-  if (AIndex <= 0) then
-    raise Exception.Create('Invalid Segment index');
-
-  Result := FSegments[AIndex - 1];
+  Result := FindByIndex(AIndex);
 
   if (Result = nil) then
-    raise Exception.CreateFmt('Segment index %d does not exist', [AIndex]);
+    raise Exception.CreateFmt('Segment index does not exist: %d', [AIndex]);
 end;
 
 function TDebugInfoSegments.FindByOffset(AOffset: TDebugInfoOffset): TDebugInfoSegment;
@@ -729,7 +728,8 @@ begin
     if ((Offset >= Segment.Offset) and (Offset < Segment.Offset+Segment.Size)) or // Start is within other range
       ((Offset+Size <= Segment.Offset) and (Offset+Size > Segment.Offset+Segment.Size)) or // Start is within other range
       ((Offset <= Segment.Offset) and (Offset+Size > Segment.Offset)) then // Other is within range
-      raise Exception.Create('Overlapping segments');
+      raise Exception.CreateFmt('Overlapping segments: %s [%.4X:%.8X] and %s [%.4X:%.8X]',
+        [Self.Name, Self.Index, Self.Offset, Segment.Name, Segment.Index, Segment.Offset]);
   end;
 end;
 
