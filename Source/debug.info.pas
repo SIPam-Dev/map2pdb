@@ -17,7 +17,7 @@ uses
   System.Generics.Defaults;
 
 type
-  TDebugInfoOffset = Cardinal;
+  TDebugInfoOffset = UInt64;
 
 type
   TDebugInfo = class;
@@ -631,7 +631,7 @@ begin
   if (AIndex <= 0) then
     raise Exception.CreateFmt('Invalid Segment index: %d', [AIndex]);
 
-  if (AIndex <= FSegments.Count) then
+  if (integer(AIndex) <= FSegments.Count) then
     Result := FSegments[AIndex - 1]
   else
     Result := nil;
@@ -728,7 +728,7 @@ begin
     if ((Offset >= Segment.Offset) and (Offset < Segment.Offset+Segment.Size)) or // Start is within other range
       ((Offset+Size <= Segment.Offset) and (Offset+Size > Segment.Offset+Segment.Size)) or // Start is within other range
       ((Offset <= Segment.Offset) and (Offset+Size > Segment.Offset)) then // Other is within range
-      raise Exception.CreateFmt('Overlapping segments: %s [%.4X:%.8X] and %s [%.4X:%.8X]',
+      raise Exception.CreateFmt('Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
         [Self.Name, Self.Index, Self.Offset, Segment.Name, Segment.Index, Segment.Offset]);
   end;
 end;

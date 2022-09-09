@@ -263,33 +263,64 @@ var
     end;
   end;
 
-  function HexToInt16(const s: string; Offset: integer): Word;
+  function HexToInt16(const s: string; var Offset: integer): Word;
   begin
     Result := 0;
+    var FirstOffset := Offset + 1;
     for var i := 1 to SizeOf(Result)*2 do
-      if (i+Offset <= Length(s)) then
+      if (Offset < Length(s)) then
       begin
-        var Nibble := HexToNibble(s[i+Offset]);
+        var Nibble := HexToNibble(s[Offset+1]);
         if (Nibble = $FF) then
-          LineLogger.Error(Reader.LineNumber, 'Invalid hex number: "%s"', [Copy(s, 1+Offset, 4)]);
+          LineLogger.Error(Reader.LineNumber, 'Invalid 16-bit hex number: "%s"', [Copy(s, FirstOffset, SizeOf(Result)*2)]);
 
-        Result := (Result SHL 4) or Nibble
+        Result := (Result SHL 4) or Nibble;
+        Inc(Offset);
       end else
-        LineLogger.Error(Reader.LineNumber, 'Invalid hex number: "%s"', [Copy(s, 1+Offset, 4)]);
+        LineLogger.Error(Reader.LineNumber, 'Invalid 16-bit hex number: "%s"', [Copy(s, FirstOffset, SizeOf(Result)*2)]);
   end;
 
-  function HexToInt32(const s: string; Offset: integer): Cardinal;
+  function HexToInt32(const s: string; var Offset: integer): Cardinal;
   begin
     Result := 0;
+    var FirstOffset := Offset + 1;
     for var i := 1 to SizeOf(Result)*2 do
-      if (i+Offset <= Length(s)) then
+      if (Offset < Length(s)) then
       begin
-        var Nibble := HexToNibble(s[i+Offset]);
+        var Nibble := HexToNibble(s[Offset+1]);
         if (Nibble = $FF) then
-          LineLogger.Error(Reader.LineNumber, 'Invalid hex number: "%s"', [Copy(s, 1+Offset, 8)]);
-        Result := (Result SHL 4) or Nibble
+          LineLogger.Error(Reader.LineNumber, 'Invalid 32-bit hex number: "%s"', [Copy(s, FirstOffset, SizeOf(Result)*2)]);
+
+        Result := (Result SHL 4) or Nibble;
+        Inc(Offset);
       end else
-        LineLogger.Error(Reader.LineNumber, 'Invalid hex number: "%s"', [Copy(s, 1+Offset, 8)]);
+        LineLogger.Error(Reader.LineNumber, 'Invalid 32-bit hex number: "%s"', [Copy(s, FirstOffset, SizeOf(Result)*2)]);
+  end;
+
+  function HexToInt64(const s: string; var Offset: integer): Int64;
+  begin
+    Result := 0;
+    var FirstOffset := Offset + 1;
+    for var i := 1 to SizeOf(Result)*2 do
+      if (Offset < Length(s)) then
+      begin
+        var Nibble := HexToNibble(s[Offset+1]);
+        if (Nibble = $FF) then
+        begin
+          // Allow 32-bit hex value (Segment offset is 16 digits in map files produced by Delphi 11.2, 8 digits in older versions)
+          if (i = SizeOf(Result)+1) then
+            break;
+          LineLogger.Error(Reader.LineNumber, 'Invalid 64-bit hex number: "%s"', [Copy(s, FirstOffset, SizeOf(Result)*2)]);
+        end;
+
+        Result := (Result SHL 4) or Nibble;
+        Inc(Offset);
+      end else
+      begin
+        if (i = SizeOf(Result)+1) then
+          break;
+        LineLogger.Error(Reader.LineNumber, 'Invalid 64-bit hex number: "%s"', [Copy(s, FirstOffset, SizeOf(Result)*2)]);
+      end;
   end;
 
 begin
@@ -314,11 +345,11 @@ begin
     // " 0001:00401000 000F47FCH .text                   CODE"
     while (not Reader.CurrentLine.IsEmpty) do
     begin
-      var n := Pos(':', Reader.LineBuffer);
+      var n: integer := 0;
+      var SegmentID: Cardinal := HexToInt16(Reader.LineBuffer, n);
 
-      var SegmentID: Cardinal := HexToInt16(Reader.LineBuffer, 0);
-
-      var Offset: TDebugInfoOffset := HexToInt32(Reader.LineBuffer, n);
+      n := Pos(':', Reader.LineBuffer, n+1);
+      var Offset: TDebugInfoOffset := HexToInt64(Reader.LineBuffer, n);
 
       n := Pos(' ', Reader.LineBuffer, n+1);
       var Size: TDebugInfoOffset := HexToInt32(Reader.LineBuffer, n);
@@ -346,7 +377,7 @@ begin
       //   "0005:00000000       OtlCommon.Utils.LastThreadName"
       //   "0005:00000100       SysInit.TlsLast"
       if (Size = 0) then
-        LineLogger.Warning(Reader.LineNumber, 'Empty segment: %s [%.4X:%.8X]', [Name, SegmentID, Segment.Offset]);
+        LineLogger.Warning(Reader.LineNumber, 'Empty segment: %s [%.4X:%.16X]', [Name, SegmentID, Segment.Offset]);
 
       Reader.NextLine;
     end;
@@ -376,12 +407,13 @@ begin
       if (Name.IsEmpty) then
         LineLogger.Error(Reader.LineNumber, 'Invalid module name'#13#10'%s', [Reader.LineBuffer]);
 
-      var SegmentID: Cardinal := HexToInt16(Address, 0);
+      n := 0;
+      var SegmentID: Cardinal := HexToInt16(Address, n);
 
-      n := Pos(':', Address);
-      var Offset: TDebugInfoOffset := HexToInt32(Address, n);
+      n := Pos(':', Address, n+1);
+      var Offset: TDebugInfoOffset := HexToInt64(Address, n);
 
-      n := Pos(' ', Address);
+      n := Pos(' ', Address, n+1);
       var Size: TDebugInfoOffset := HexToInt32(Address, n);
       if (Size = 0) then
         LineLogger.Error(Reader.LineNumber, 'Invalid module size'#13#10'%s', [Reader.LineBuffer]);
@@ -399,7 +431,7 @@ begin
       if (Offset + Size <= Segment.Size) then
         DebugInfo.Modules.Add(Name, Segment, Offset, Size)
       else
-        LineLogger.Warning(Reader.LineNumber, 'Module exceed segment bounds - ignored: %s [%.4X:%.8X+%d]', [Name, SegmentID, Offset, Size]);
+        LineLogger.Warning(Reader.LineNumber, 'Module exceed segment bounds - ignored: %s [%.4X:%.16X+%d]', [Name, SegmentID, Offset, Size]);
 
       Reader.NextLine;
     end;
@@ -428,10 +460,11 @@ begin
       if (Name.IsEmpty) then
         LineLogger.Error(Reader.LineNumber, 'Invalid symbol name'#13#10'%s', [Reader.LineBuffer]);
 
-      var SegmentID: Cardinal := HexToInt16(Address, 0);
+      n := 0;
+      var SegmentID: Cardinal := HexToInt16(Address, n);
 
-      n := Pos(':', Address);
-      var Offset: TDebugInfoOffset := HexToInt32(Address, n);
+      n := Pos(':', Address, n+1);
+      var Offset: TDebugInfoOffset := HexToInt64(Address, n);
 
       var Segment := DebugInfo.Segments.FindByIndex(SegmentID);
       if (Segment = nil) then
@@ -451,11 +484,11 @@ begin
 
           var Symbol := Module.Symbols.Add(Name, Offset);
           if (Symbol = nil) then
-            LineLogger.Warning(Reader.LineNumber, 'Symbol with duplicate offset ignored: [%.4X:%.8X] %s', [SegmentID, Offset, Name]);
+            LineLogger.Warning(Reader.LineNumber, 'Symbol with duplicate offset ignored: [%.4X:%.16X] %s', [SegmentID, Offset, Name]);
         end;
 
       end else
-        LineLogger.Warning(Reader.LineNumber, 'Failed to resolve symbol to module: [%.4X:%.8X] %s', [SegmentID, Offset, Name]);
+        LineLogger.Warning(Reader.LineNumber, 'Failed to resolve symbol to module: [%.4X:%.16X] %s', [SegmentID, Offset, Name]);
 
       Reader.NextLine;
     end;
@@ -546,25 +579,25 @@ begin
             var SegmentID: Cardinal := HexToInt16(Reader.LineBuffer, n);
             if (SegmentID <> Segment.Index) then
               LineLogger.Error(Reader.LineNumber, 'Segment mismatch. Module segment:%d (%s), Line segment:%d'#13#10'%s', [Segment.Index, Segment.Name, SegmentID, Reader.LineBuffer]);
-            Inc(n, 4+1);
+            Inc(n);
 
             // Get offset
-            var Offset: TDebugInfoOffset := HexToInt32(Reader.LineBuffer, n);
-            Inc(n, 8+1);
+            var Offset: TDebugInfoOffset := HexToInt64(Reader.LineBuffer, n);
+            Inc(n);
 
             // Ignore line numbers with offset=0
             if (Offset <> 0) then
             begin
               if (Offset < Module.Offset) then
               begin
-                LineLogger.Warning(Reader.LineNumber, 'Line number offset out of range for module. Offset:%.8X, Module:%s [%.8X - %.8X]', [Offset, Module.Name, Module.Offset, Module.Offset+Module.Size]);
+                LineLogger.Warning(Reader.LineNumber, 'Line number offset out of range for module. Offset:%.16X, Module:%s [%.16X - %.16X]', [Offset, Module.Name, Module.Offset, Module.Offset+Module.Size]);
               end else
               if (Offset < Module.Offset + Module.Size) then
               begin
                 // Validate module
                 var ModuleByOffset := DebugInfo.Modules.FindByOffset(Module.Segment, Offset);
                 if (Module <> ModuleByOffset) then
-                  LineLogger.Error(Reader.LineNumber, 'Module mismatch: Offset=%.8X, Module=%s, Found module:%s'#13#10'%s', [Offset, Module.Name, ModuleByOffset.Name, Reader.LineBuffer]);
+                  LineLogger.Error(Reader.LineNumber, 'Module mismatch: Offset=%.16X, Module=%s, Found module:%s'#13#10'%s', [Offset, Module.Name, ModuleByOffset.Name, Reader.LineBuffer]);
 
                 // Offset is relative to segment. Make it relative to module
                 Dec(Offset, Module.Offset);
@@ -576,7 +609,7 @@ begin
                 // This is typically the last "end." of the unit. The offset corresponds to the start of the next module.
 
                 // We can get *a lot* of these so I've disabled output of them for now
-                // Logger.Warning(Reader.LineNumber, 'Line number offset out of range for module: Offset=%.8X, Module=%s', [Offset, Module.Name]);
+                // Logger.Warning(Reader.LineNumber, 'Line number offset out of range for module: Offset=%.16X, Module=%s', [Offset, Module.Name]);
               end;
             end else
               LineLogger.Warning(Reader.LineNumber, 'Line number with zero offset ignored. Module:%s, Segment:%.4X, Source:%s, Line:%d', [Module.Name, SegmentID, SourceFile.Filename, LineNumber]);
