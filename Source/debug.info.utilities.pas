@@ -69,7 +69,7 @@ begin
       for var MaskValue in MaskValues do
       begin
         var Segment: integer;
-        if (MaskValue.Length = 4) and (TryStrToInt('$'+MaskValue, Segment)) and (Segment <= $FFFF) then
+        if (MaskValue.Length = 4) and (TryStrToInt(MaskValue, Segment)) and (Segment <= $FFFF) then
           Segments.Add(Segment)
         else
           Masks.Add(TMask.Create(MaskValue));

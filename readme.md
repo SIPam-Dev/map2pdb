@@ -18,16 +18,16 @@ map2pdb is a console mode application. To use it you simply run it from the comm
 map2pdb [options] <map-filename>
 ```
 
-| Option | Meaning |
-|--------|---------|
-| `-pdb[:<output-filename>]` | Writes a PDB file (default) |
-| `-yaml[:<output-filename>]` | Writes an YAML file that can be used with `llvm-pdbutil yam2pdb` |
-| `-bind[:<filename>]` | Patches the specified exe/dll file to include a reference to the PDB file |
-| `-include:<filters>` | Only include data that satisfies the specified filters in the PDB |
-| `-exclude:<filters>` | Exclude data that satisfies the specified filter from the PDB |
-| `-v` | Print verbose output |
-| `-debug` | Print debug information |
-| `-pause` | Prompt after completion |
+| Option                      | Meaning                                                                   |
+| --------------------------- | ------------------------------------------------------------------------- |
+| `-pdb[:<output-filename>]`  | Writes a PDB file (default)                                               |
+| `-yaml[:<output-filename>]` | Writes an YAML file that can be used with `llvm-pdbutil yam2pdb`          |
+| `-bind[:<filename>]`        | Patches the specified exe/dll file to include a reference to the PDB file |
+| `-include:<filters>`        | Only include data that satisfies the specified filters in the PDB         |
+| `-exclude:<filters>`        | Exclude data that satisfies the specified filter from the PDB             |
+| `-v`                        | Print verbose output                                                      |
+| `-debug`                    | Print debug information                                                   |
+| `-pause`                    | Prompt after completion                                                   |
 
 The order of parameters is not significant.
 
@@ -52,24 +52,27 @@ For example to exclude all DevExpress units and Firedac:
 
 A segment filter specifies the index value of segments/sections to include or exclude from the PDB. The list of segments can be found at the very top of the MAP file.  
 Most of the code is typically located in segment 0001 so a common filter would be:  
+
 ```
   -include:0001
 ```
 
-In order for a filter to be recognized as a segment filter it must consist of 4 hexadecimal digits.
+In order for a filter to be recognized as a segment filter it must consist of 4 decimal digits.
 
 #### Examples
 
 * Read from foobar.map, create foobar.pdb, patch foobar.exe to reference foobar.pdb and only include symbols from segment 0001 but ignore all units starting with "dx" or "cx":  
+  
   ```
   map2pdb -include:0001 -exclude:dx*;cx* -bind foobar.map
   ```
 
 * Read from mypackage.map, create mypackage.pdb and patch mypackage.bpl to reference mypackage.pdb:  
+  
   ```
   map2pdb -bind:mypackage.bpl mypackage.map
   ```
-  
+
 ### Requirements
 
 Since map2pdb uses the information in your project's MAP file to generate the PDB file, you need to link your projects with a **Detailed** map file. You do not need to link with debug information but the detailed MAP file is required. Additionally you should compile with full **Debug Information** enabled since this controls if the MAP file will contain line number information or not.  
@@ -115,7 +118,7 @@ The following resources was used as references and inspiration during developmen
 - [llvm-pdbutil](https://llvm.org/docs/CommandGuide/llvm-pdbutil.html)  
   Used to validate, read and (partially) write PDB files and dump the information in various formats.  
   Unofficial downloads here: https://github.com/shaharv/llvm-pdbutil-builds/releases
-  
+
 - [cvdump](https://github.com/microsoft/microsoft-pdb/tree/master/cvdump)  
   Microsoft's cvdump utilty. Used to validate and read PDB files and dump the information in text format.
 
