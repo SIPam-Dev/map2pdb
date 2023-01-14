@@ -62,7 +62,7 @@ end;
 procedure DisplayBanner;
 begin
   Writeln('map2pdb - Copyright (c) 2021 Anders Melander');
-  Writeln('Version 2.7.0');
+  Writeln('Version 2.8.0');
   Writeln;
 end;
 
@@ -84,9 +84,13 @@ begin
   Writeln('                             a reference to the pdb file');
   Writeln('  -include:<filenames>       Include the specified list of modules in the pdb');
   Writeln('                             (semicolor separated list, wildcards supported)');
+  Writeln('  -include:<nnnn>            Include the specified segment in the pdb');
+  Writeln('                             (number must be a 4 digit decimal number)');
   Writeln('  -exclude:<filenames>       Exclude the specified list of modules from the pdb');
   Writeln('                             (semicolor separated list, wildcards supported)');
-  Writeln('  -pause                     prompt after completion');
+  Writeln('  -exclude:<nnnn>            Exclude the specified segment from the pdb');
+  Writeln('                             (number must be a 4 digit decimal number)');
+  Writeln('  -pause                     Prompt after completion');
   Writeln;
   Writeln('Examples:');
   Writeln;
@@ -146,6 +150,7 @@ const
   sFileTypes: array[TTargetType] of string = ('.pdb', '.yaml');
   WriterClasses: array[TTargetType] of TDebugInfoWriterClass = (TDebugInfoPdbWriter, TDebugInfoYamlWriter);
 begin
+  var DoPause := FindCmdLineSwitch('pause');
   var sw := TStopwatch.StartNew;
   try
 
@@ -164,7 +169,7 @@ begin
     begin
       DisplayHelp;
 
-      if (FindCmdLineSwitch('pause')) then
+      if (DoPause) then
       begin
         Writeln('Press enter to continue');
         Readln;
@@ -306,10 +311,7 @@ begin
     madExcept.HandleException;
 
     if (DebugHook <> 0) then
-    begin
-      Writeln('Press enter to continue');
-      Readln;
-    end;
+      DoPause := True;
     ExitCode := 1;
 {$else MADEXCEPT}
     on E: Exception do
@@ -317,10 +319,7 @@ begin
       Writeln(E.ClassName, ': ', E.Message);
 
       if (DebugHook <> 0) then
-      begin
-        Writeln('Press enter to continue');
-        Readln;
-      end;
+        DoPause := True;
 
       ExitCode := 1;
     end;
@@ -329,7 +328,7 @@ begin
 
   DisplayElapsedTime(sw.ElapsedMilliseconds);
 
-  if (ExitCode = 0) and (FindCmdLineSwitch('pause')) then
+  if (DoPause) then
   begin
     Writeln('Done - Press enter to continue');
     Readln;
