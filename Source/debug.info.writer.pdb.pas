@@ -129,8 +129,7 @@ type
 
   public
 
-    constructor Create; overload; override;
-    constructor Create(ABlockSize: Cardinal); reintroduce; overload;
+    constructor Create(ABlockSize: Cardinal); override;
 
     destructor Destroy; override;
 
@@ -205,24 +204,23 @@ end;
 // -----------------------------------------------------------------------------
 const
   sLinkerModuleName = '* Linker *';
+  DefaultBlockSize = 8192;
 
 type
   TDebugInfoLinkerModule = class(TDebugInfoModule);
 
 constructor TDebugInfoPdbWriter.Create(ABlockSize: Cardinal);
 begin
-  inherited Create;
+  if (ABlockSize = 0) then
+    ABlockSize := DefaultBlockSize;
+
+  inherited Create(ABlockSize);
 
   FBlockSize := ABlockSize;
   FModuleLayout := TModuleLayoutList.Create;
   FNamedStreams := TNamedStreamList.Create;
   FStringTable := TStringList.Create(dupIgnore, True, True);
 
-end;
-
-constructor TDebugInfoPdbWriter.Create;
-begin
-  Create(4096);
 end;
 
 destructor TDebugInfoPdbWriter.Destroy;

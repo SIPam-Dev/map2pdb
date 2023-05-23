@@ -90,6 +90,8 @@ begin
   Writeln('                             (semicolor separated list, wildcards supported)');
   Writeln('  -exclude:<nnnn>            Exclude the specified segment from the pdb');
   Writeln('                             (number must be a 4 digit decimal number)');
+  Writeln('  -blocksize:<nnnn>          Set MSF block size');
+  Writeln('                             (default: 4096, valid values are 1024, 2048, 4096, 8192, etc.)');
   Writeln('  -pause                     Prompt after completion');
   Writeln;
   Writeln('Examples:');
@@ -274,13 +276,21 @@ begin
       (*
       ** Write target file
       *)
-      var Writer := WriterClasses[TargetType].Create;
+      begin
+        var BlockSize: Integer := 0;
+        var Param: string;
+        if (FindCmdLineSwitch('blocksize', Param, True, [clstValueAppended])) and (TryStrToInt(Param, BlockSize)) then
+          Logger.Info('MSF block size: %.0n bytes', [BlockSize * 1.0]);
+
+      var Writer := WriterClasses[TargetType].Create(BlockSize);
       try
 
         Writer.SaveToFile(TargetFilename, DebugInfo);
 
       finally
         Writer.Free;
+      end;
+
       end;
 
     finally
