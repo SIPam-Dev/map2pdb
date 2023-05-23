@@ -188,6 +188,8 @@ type
 // Encapsulates a MSF container file
 // -----------------------------------------------------------------------------
   TMSFFile = class
+  public
+    const DefaultBlockSize = 4096;
   strict private type
     TFileState = (fsInit, fsOpen, fsClosed);
   strict private

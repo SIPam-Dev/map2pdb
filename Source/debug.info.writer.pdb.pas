@@ -204,7 +204,6 @@ end;
 // -----------------------------------------------------------------------------
 const
   sLinkerModuleName = '* Linker *';
-  DefaultBlockSize = 8192;
 
 type
   TDebugInfoLinkerModule = class(TDebugInfoModule);
@@ -212,7 +211,7 @@ type
 constructor TDebugInfoPdbWriter.Create(ABlockSize: Cardinal);
 begin
   if (ABlockSize = 0) then
-    ABlockSize := DefaultBlockSize;
+    ABlockSize := TMSFFile.DefaultBlockSize;
 
   inherited Create(ABlockSize);
 
