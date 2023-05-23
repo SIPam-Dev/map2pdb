@@ -468,6 +468,46 @@ begin
   MSFSuperBlock.BlockMapAddr := IndexStream.BlockIndex;
 
   FWriter.Write<TMSFSuperBlock>(MSFSuperBlock);
+
+  // Rewind and update all FBMs so all blocks (essentially all blocks "inside"
+  // the file) are marked as allocated.
+  // See: WriteBlockMap
+
+  var BlockCount := MSFSuperBlock.NumBlocks;
+  var FreeBlockMapIndex := MSFSuperBlock.FreeBlockMapBlock;
+
+  while (BlockCount > 0) do
+  begin
+    // Seek to update FBM
+    FWriter.BlockIndex := FreeBlockMapIndex;
+
+    var SpaceInFreeBlockMap := MSFSuperBlock.BlockSize;
+
+    // Write chunks of 8 blocks allocated
+    while (SpaceInFreeBlockMap > 0) and (BlockCount > 8) do
+    begin
+      FWriter.Write($FF); // 8 bits set = 8 blocks allocated
+      Dec(BlockCount, 8);
+      Dec(SpaceInFreeBlockMap);
+    end;
+
+    // Still space left in FBM and more blocks to allocate?
+    if (SpaceInFreeBlockMap > 0) and (BlockCount > 0) then
+    begin
+      // We must have less than 8 blocks remaining. Write it as an actual bit mask.
+      var BitMask: Byte := 0;
+      while (BlockCount > 0) do
+      begin
+        BitMask := (BitMask shl 1) or 1;
+        Dec(BlockCount);
+      end;
+      FWriter.Write(BitMask);
+      Dec(SpaceInFreeBlockMap);
+    end;
+
+    // Move to next interval. There are <BlockSize> blocks between the FPMs.
+    Inc(FreeBlockMapIndex, FBlockSize);
+  end;
 end;
 
 procedure TMSFFile.WriteDirectoryIndex(IndexStream, DirectoryStream: TMSFStream);
@@ -748,14 +788,16 @@ end;
 
 procedure TBinaryBlockWriter.WriteBlockMap;
 const
-  NoVacancies: Byte = $FF;
+//  NoVacancies: Byte = $FF;
+  AllVacancies: Byte = $00;
 begin
   BeginBlock;
   Assert((BlockIndex mod FBlockSize) in [1, 2]);
 
   // Mark all BlockSize*8 blocks occupied
   for var i := 0 to FBlockSize-1 do
-    FStream.WriteBuffer(NoVacancies, 1);
+//    FStream.WriteBuffer(NoVacancies, 1);
+    FStream.WriteBuffer(AllVacancies, 1);
 
   FStreamSize := Max(FStreamSize, FStream.Position);
 
@@ -812,33 +854,39 @@ type
   TByteArray = array[0..MaxInt-1] of Byte;
   PByteArray = ^TByteArray;
 begin
-  // Find start and end intervals of this piece of data.
+  // Find start interval of this piece of data.
   // Disregard the first block so intervals start with the two FPM blocks
-  var StartInterval := (FStream.Position - FBlockSize) div FIntervalSize;
-  var EndInterval := (FStream.Position - FBlockSize + Count) div FIntervalSize;
+  var Interval := (FStream.Position - FBlockSize) div FIntervalSize;
 
-  if (StartInterval <> EndInterval) then
+  while (Count > 0) do
   begin
+    // How many bytes from current position to end of current interval
+    var BytesInThisInterval := (Interval+1) * FIntervalSize + FBlockSize - FStream.Position;
+    // ...but no more than what we need
+    BytesInThisInterval := Min(Count, BytesInThisInterval);
 
-    // Data straddles the FPMs and must be split in two.
-    // First part is from current position to start of FPM1
-    var FirstCount := EndInterval * FIntervalSize + FBlockSize - FStream.Position;
+    // Write part
+    FStream.WriteBuffer(Buffer, BytesInThisInterval);
+    Dec(Count, BytesInThisInterval);
 
-    // Write first part
-    FStream.WriteBuffer(Buffer, FirstCount);
+    // More to write or end of interval?
+    if (Count >= 0) then
+    begin
+      // We have either written all the data, we are at the end of the
+      // current interval, or both.
+      var NewInterval := (FStream.Position - FBlockSize) div FIntervalSize;
 
-    // Write the two FPM blocks
-    WriteBlockMap;
-    WriteBlockMap;
+      // If we are at a new interval...
+      if (NewInterval <> Interval) then
+      begin
+        // ...write the two FPM blocks to start a new interval
+        WriteBlockMap;
+        WriteBlockMap;
 
-    // Write second part
-    if (Count > FirstCount) then
-      FStream.WriteBuffer(PByteArray(@Buffer)[FirstCount], Count-FirstCount);
-
-  end else
-    // Everything within one interval: Just write it in one go.
-    FStream.WriteBuffer(Buffer, Count);
-  FStreamSize := Max(FStreamSize, FStream.Position);
+        Interval := NewInterval;
+      end;
+    end;
+  end;
 end;
 
 function TBinaryBlockWriter.BeginBlock(Poison: boolean): Cardinal;
