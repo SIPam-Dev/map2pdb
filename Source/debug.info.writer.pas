@@ -29,7 +29,7 @@ type
   protected
     property Logger: IDebugInfoModuleLogger read FModuleLogger;
   public
-    constructor Create; virtual;
+    constructor Create(ABlockSize: Cardinal = 0); virtual;
 
     procedure SaveToStream(Stream: TStream; DebugInfo: TDebugInfo); virtual; abstract;
     procedure SaveToFile(const Filename: string; DebugInfo: TDebugInfo);
@@ -40,7 +40,7 @@ type
 
 implementation
 
-constructor TDebugInfoWriter.Create;
+constructor TDebugInfoWriter.Create(ABlockSize: Cardinal);
 begin
   inherited Create;
   FModuleLogger := RegisterDebugInfoModuleLogger('writer');
