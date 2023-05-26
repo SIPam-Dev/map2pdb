@@ -297,13 +297,6 @@ begin
   FWriter.WriteBlockMap;
   Assert(FWriter.BlockIndex = 3);
 
-  // Write an empty block just so our layout matches LLVM.
-  // This can be removed once our output is validated.
-  FWriter.BeginBlock;
-  FWriter.Write(Byte(0));
-  FWriter.EndBlock;
-
-
   // FPM (or FBM) = Free Page Map (or Free Block Map)
   //
   // The FPM exists either at block 1 or block 2 of the MSF.  However, this
