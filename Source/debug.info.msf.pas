@@ -200,10 +200,11 @@ type
     FCurrentStream: TMSFStream;
     FNextStreamIndex: TMSFStreamIndex;
   strict private
-    procedure WriteSuperBlock(IndexStream, DirectoryStream: TMSFStream);
+    procedure WriteSuperBlock(var MSFSuperBlock: TMSFSuperBlock; IndexStream, DirectoryStream: TMSFStream);
     procedure WriteStreamBlockList(Writer: TBinaryBlockWriter; Stream: TMSFStream);
     procedure WriteDirectoryIndex(IndexStream, DirectoryStream: TMSFStream);
     procedure WriteDirectory(DirectoryStream: TMSFStream);
+    procedure WriteFreeBlockMap(const MSFSuperBlock: TMSFSuperBlock);
 
     function GetCount: integer;
     function GetStream(Index: TMSFStreamIndex): TMSFStream;
@@ -366,7 +367,12 @@ begin
     // Rewind and write the MSF Superblock at block #0.
     // At this point all streams, and the directory, must have been written.
     Writer.BlockIndex := 0;
-    WriteSuperBlock(IndexStream, DirectoryStream);
+    var MSFSuperBlock: TMSFSuperBlock;
+    WriteSuperBlock(MSFSuperBlock, IndexStream, DirectoryStream);
+
+
+    // Finally update the Free Block Map
+    WriteFreeBlockMap(MSFSuperBlock);
 
   finally
     IndexStream.Free;
@@ -457,10 +463,9 @@ begin
   end;
 end;
 
-procedure TMSFFile.WriteSuperBlock(IndexStream, DirectoryStream: TMSFStream);
-var
-  MSFSuperBlock: TMSFSuperBlock;
+procedure TMSFFile.WriteSuperBlock(var MSFSuperBlock: TMSFSuperBlock; IndexStream, DirectoryStream: TMSFStream);
 begin
+  MSFSuperBlock := Default(TMSFSuperBlock);
   MSFSuperBlock.Magic := MSFMagic;
   MSFSuperBlock.BlockSize := FBlockSize;
   MSFSuperBlock.FreeBlockMapBlock := 1; // 1 or 2. In our case it's always block #1
@@ -470,6 +475,10 @@ begin
   MSFSuperBlock.BlockMapAddr := IndexStream.BlockIndex;
 
   FWriter.Write<TMSFSuperBlock>(MSFSuperBlock);
+end;
+
+procedure TMSFFile.WriteFreeBlockMap(const MSFSuperBlock: TMSFSuperBlock);
+begin
 
   // Rewind and update all FBMs so all blocks (essentially all blocks "inside"
   // the file) are marked as allocated.
@@ -488,7 +497,7 @@ begin
     // Write chunks of 8 blocks allocated
     while (SpaceInFreeBlockMap > 0) and (BlockCount > 8) do
     begin
-      FWriter.Write($FF); // 8 bits set = 8 blocks allocated
+      FWriter.Write($00); // No bits set = 8 blocks allocated
       Dec(BlockCount, 8);
       Dec(SpaceInFreeBlockMap);
     end;
@@ -497,14 +506,15 @@ begin
     if (SpaceInFreeBlockMap > 0) and (BlockCount > 0) then
     begin
       // We must have less than 8 blocks remaining. Write it as an actual bit mask.
-      var BitMask: Byte := 0;
+      var Mask: Byte := $FF;
+      var BitMask: Byte := 1;
       while (BlockCount > 0) do
       begin
-        BitMask := (BitMask shl 1) or 1;
+        Mask := Mask and (not BitMask);
+        BitMask := BitMask shl 1;
         Dec(BlockCount);
       end;
-      FWriter.Write(BitMask);
-      Dec(SpaceInFreeBlockMap);
+      FWriter.Write(Mask);
     end;
 
     // Move to next interval. There are <BlockSize> blocks between the FPMs.
@@ -790,15 +800,13 @@ end;
 
 procedure TBinaryBlockWriter.WriteBlockMap;
 const
-//  NoVacancies: Byte = $FF;
-  AllVacancies: Byte = $00;
+  AllVacancies: Byte = $FF;
 begin
   BeginBlock;
   Assert((BlockIndex mod FBlockSize) in [1, 2]);
 
-  // Mark all BlockSize*8 blocks occupied
+  // Mark all BlockSize*8 blocks free
   for var i := 0 to FBlockSize-1 do
-//    FStream.WriteBuffer(NoVacancies, 1);
     FStream.WriteBuffer(AllVacancies, 1);
 
   FStreamSize := Max(FStreamSize, FStream.Position);
