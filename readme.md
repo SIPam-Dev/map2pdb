@@ -8,11 +8,11 @@ Copyright (c) 2021 Anders Melander
 
 ![Profiling a Delphi application in VTune](Info/vtune_delphi.png)
 
-map2pdb is written in pure Delphi with no dependencies on other libraries or tools. Unlike other similar solutions it does not [rely on the undocumented Visual Studio DLLs](https://github.com/rainers/cv2pdb/blob/master/src/mspdb.cpp) to build and write the PDB file.
+map2pdb is written in pure Delphi with no dependencies on other libraries or tools. Unlike other similar solutions, it does not [rely on the undocumented Visual Studio DLLs](https://github.com/rainers/cv2pdb/blob/master/src/mspdb.cpp) to build and write the PDB file.
 
 ### Usage
 
-map2pdb is a console mode application. To use it you simply run it from the command line with the appropriate parameters. You can also add it to the Tools menu inside the Delphi or C++ Builder IDE so it's easily available there. More on that below.
+map2pdb is a console-mode application. To use it you simply run it from the command line with the appropriate parameters. You can also add it to the Tools menu inside the Delphi or C++ Builder IDE so it's easily available there. More on that below.
 
 ```
 map2pdb [options] <map-filename>
@@ -28,6 +28,7 @@ map2pdb [options] <map-filename>
 | `-v`                        | Print verbose output                                                      |
 | `-debug`                    | Print debug information                                                   |
 | `-pause`                    | Prompt after completion                                                   |
+| -?                          | Display help                                                              |
 
 The order of parameters is not significant.
 
@@ -37,7 +38,7 @@ Filters can be used to limit the size of the produced PDB. This can be necessary
 
 Filters are applied after the map file has been imported but before the PDB is produced. More than one filter can be specified.
 
-First the include filters are applied; Everything that doesn't satisfy the include filter is excluded from the PDB. Then the exclude filters are applied; Everything that satisfies the exclude filter is excluded from the PDB.
+First, the include-filters are applied; Everything that doesn't satisfy the include-filter is excluded from the PDB. Then the exclude-filters are applied; Everything that satisfies the exclude-filter is excluded from the PDB.
 
 ##### Module filter
 
@@ -75,7 +76,7 @@ In order for a filter to be recognized as a segment filter it must consist of 4 
 
 ### Requirements
 
-Since map2pdb uses the information in your project's MAP file to generate the PDB file, you need to link your projects with a **Detailed** map file. You do not need to link with debug information but the detailed MAP file is required. Additionally you should compile with full **Debug Information** enabled since this controls if the MAP file will contain line number information or not.  
+Since map2pdb uses the information in your project's MAP file to generate the PDB file, you need to link your projects with a **Detailed** map file. You do not need to link with debug information but the detailed MAP file is required. Additionally, you should compile with full **Debug Information** enabled since this controls if the MAP file will contain line number information or not.  
 None of these options will affect the final output of your compiled project; They only affect the debug information which is stored in the MAP and DCU files.
 
 You enable the Detailed MAP file in your project's [linker options](http://docwiki.embarcadero.com/RADStudio/Sydney/en/Linking) and the Debug information in the project's [compiler options](http://docwiki.embarcadero.com/RADStudio/Sydney/en/Compiling#Debugging_Options).
@@ -93,11 +94,11 @@ You enable the Detailed MAP file in your project's [linker options](http://docwi
 You should now have a new menu item in the Tools menu. When you have compiled your project and want to generate a PDB file you can now just use this menu item to do so.
 
 The purpose of the **-pause** switch in the example above is to enable you to see what's happening. Without it the command window would just open briefly and then close when map2pdb was done. You can remove it if you don't need that.  
-Of course you can also add whatever additional parameters you need.
+Of course, you can also add whatever additional parameters you need.
 
 ### References
 
-The following resources was used as references and inspiration during development of map2pdb:
+The following resources were used as references and inspiration during the development of map2pdb:
 
 - [Microsoft pdb](https://github.com/Microsoft/microsoft-pdb)  
   Incomplete source code "documenting" the PDB file format.
@@ -131,11 +132,11 @@ The following resources was used as references and inspiration during developmen
 
 ##### Performance problems with Intel VTune
 
-Due to a bug in the **msdia140.dll** file that comes bundled with VTune you will likely experience that VTune takes an extremely long time to resolve symbols on anything but the smallest projects.
+Due to a bug in the **msdia140.dll** file that comes bundled with some versions of VTune you can experience that VTune takes an extremely long time to resolve symbols on anything but the smallest projects.
 
-msdia140.dll implements the [Debug Interface Access SDK](https://docs.microsoft.com/en-us/visualstudio/debugger/debug-interface-access/debug-interface-access-sdk?view=vs-2019). The bug was introduced in VS2017 and supposedly fixed in VS2019 but apparently Intel hasn't caught up to that fact and new versions of VTune still comes with the old VS2017 version of msdia140.dll.
+msdia140.dll implements the [Debug Interface Access SDK](https://docs.microsoft.com/en-us/visualstudio/debugger/debug-interface-access/debug-interface-access-sdk?view=vs-2019). The bug was introduced in VS2017 and supposedly fixed in VS2019 but apparently, it took a while for Intel to discover that so they continued shipping the old VS2017 version of msdia140.dll.
 
-To fix this problem all you have to do is replace VTune's msdia140.dll with a newer version. The file is located in the bin32 and bin64 folders under the VTune root folder. Note that the 32-bit and 64-bit files are not the same. You need to replace the file in the bin32 folder with the 32-bit version of msdia140.dll and the one in the bin64 folder with the 64-bit version.
+To fix this problem (if you have it) all you have to do is replace VTune's msdia140.dll with a newer version. The file is located in the bin32 and bin64 folders under the VTune root folder. Note that the 32-bit and 64-bit files are not the same. You need to replace the file in the bin32 folder with the 32-bit version of msdia140.dll and the one in the bin64 folder with the 64-bit version.
 
 Now here's the catch; The files you need to replace are not the ones that are actually named msdia140.dll. You need to replace the ones named **amplxe_msdia140.dll**. Remember to save the old ones first in case you mess this up.
 
@@ -150,7 +151,7 @@ To build map2pdb just open `map2pdb.dproj` in Delphi, build and you're done.
 ### Download
 
 A precompiled map2pdb.exe can be downloaded here: https://bitbucket.org/anders_melander/map2pdb/downloads/  
-It has been virus scanned locally with BitDefender and remotely with [VirusTotal](https://www.virustotal.com).
+It has been virus scanned locally with Kaspersky and remotely with [VirusTotal](https://www.virustotal.com).
 
 ### License
 
