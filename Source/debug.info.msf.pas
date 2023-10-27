@@ -500,7 +500,7 @@ begin
     begin
       // We must have less than 8 blocks remaining. Write it as an actual bit mask.
       var Mask: Byte := $FF;
-      var BitMask: Byte := 1;
+      var BitMask: Word := 1; // Word to avoid overflow if BlockCount=8
       while (BlockCount > 0) do
       begin
         Mask := Mask and (not BitMask);
