@@ -459,7 +459,9 @@ begin
 
     Logger.Info('- Symbols');
     // "  Address             Publics by Name"
-    while (Reader.HasData) and (not Reader.CurrentLine(True).EndsWith('Publics by Name')) do
+    // Note: Beta versions produce the following:
+    // "  Address             Publics by Name           Rva+Base"
+    while (Reader.HasData) and (not Reader.CurrentLine(True).Contains('Publics by Name')) do
       Reader.NextLine(True);
 
     // Skip empty lines and exit if no more lines
@@ -522,17 +524,21 @@ begin
 
     (*
     ** Symbols - sorted by address
+    **
+    ** We skip this section - it duplicates the previous
     *)
 
     // "  Address             Publics by Value"
-    while (Reader.HasData) and (not Reader.CurrentLine(True).EndsWith('Publics by Value')) do
+    // Note: Beta versions produce the following:
+    // "  Address             Publics by Value          Rva+Base"
+    while (Reader.HasData) and (not Reader.CurrentLine(True).Contains('Publics by Value')) do
       Reader.NextLine(True);
 
-    // Skip this section - it duplicates the previous
 
     (*
     ** Line numbers - grouped by module & segment
     *)
+
 
     Logger.Info('- Line numbers');
     // Rest of file is:
