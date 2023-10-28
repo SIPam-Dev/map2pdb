@@ -395,6 +395,16 @@ begin
       if (Size = 0) then
         LineLogger.Warning(Reader.LineNumber, 'Empty segment: %s [%.4d:%.16X]', [Name, SegmentID, Segment.Offset]);
 
+      // Check for non-fatal overlapping segments (specifically .tls):
+      //   "0001:0000000000401000 006CD7B8H .text                   CODE"
+      //   "0004:0000000000400000 00008260H .tls                    TLS"
+      // Fatal overlaps have already been checked when we assigned Segment.Offset above.
+      var OverlappingSegment := Segment.FindOverlap;
+
+      if (OverlappingSegment <> nil) then
+        LineLogger.Warning(Reader.LineNumber, 'Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
+          [Segment.Name, Segment.Index, Segment.Offset, OverlappingSegment.Name, OverlappingSegment.Index, OverlappingSegment.Offset]);
+
       Reader.NextLine;
     end;
 

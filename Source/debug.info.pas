@@ -34,6 +34,7 @@ type
     sctTLS,             // Thread Local Storage data
     sctDEBUG            // Debug data
   );
+  TDebugInfoSegmentClasses = set of TDebugInfoSegmentClass;
   //
   // The predefined sections are:
   //   .text, .bss, .rdata, .data, .rsrc, .edata, .idata, .pdata and .debug
@@ -60,6 +61,8 @@ type
     constructor Create(AOwner: TDebugInfoSegments; AIndex: Cardinal; const AName: string; AClassType: TDebugInfoSegmentClass = sctDATA); overload;
 
     class function GuessClassType(const AName: string): TDebugInfoSegmentClass;
+
+    function FindOverlap(AIgnoredClassTypes: TDebugInfoSegmentClasses = []): TDebugInfoSegment;
 
     property Index: Cardinal read FIndex; // 1 based value
     property SegClassType: TDebugInfoSegmentClass read FSegClassType;
@@ -714,9 +717,14 @@ begin
   CheckOverlap;
 end;
 
-procedure TDebugInfoSegment.CheckOverlap;
+function TDebugInfoSegment.FindOverlap(AIgnoredClassTypes: TDebugInfoSegmentClasses): TDebugInfoSegment;
 begin
+  Result := nil;
+
   if (Size = 0) then
+    Exit;
+
+  if (SegClassType in AIgnoredClassTypes) then
     Exit;
 
   for var Segment in FOwner do
@@ -725,12 +733,24 @@ begin
     if (Segment = Self) or (Segment.Size = 0) then
       continue;
 
+    if (Segment.SegClassType in AIgnoredClassTypes) then
+      continue;
+
     if ((Offset >= Segment.Offset) and (Offset < Segment.Offset+Segment.Size)) or // Start is within other range
       ((Offset+Size <= Segment.Offset) and (Offset+Size > Segment.Offset+Segment.Size)) or // Start is within other range
       ((Offset <= Segment.Offset) and (Offset+Size > Segment.Offset)) then // Other is within range
-      raise Exception.CreateFmt('Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
-        [Self.Name, Self.Index, Self.Offset, Segment.Name, Segment.Index, Segment.Offset]);
+      Exit(Segment);
   end;
+end;
+
+procedure TDebugInfoSegment.CheckOverlap;
+begin
+  // Ignore overlap in .tls segment; Delphi is known to produce map files with invalid .tls segment offset.
+  var OverlappingSegment := FindOverlap([sctTLS]);
+
+  if (OverlappingSegment <> nil) then
+    raise Exception.CreateFmt('Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
+      [Self.Name, Self.Index, Self.Offset, OverlappingSegment.Name, OverlappingSegment.Index, OverlappingSegment.Offset]);
 end;
 
 { TDebugInfoSourceFile }
