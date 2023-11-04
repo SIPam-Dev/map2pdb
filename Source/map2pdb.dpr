@@ -23,17 +23,18 @@ uses
   System.Diagnostics,
   System.Generics.Collections,
   System.StrUtils,
-  debug.info.reader.map in 'debug.info.reader.map.pas',
-  debug.info.writer.yaml in 'debug.info.writer.yaml.pas',
   debug.info in 'debug.info.pas',
-  debug.info.pdb in 'debug.info.pdb.pas',
-  debug.info.writer.pdb in 'debug.info.writer.pdb.pas',
   debug.info.writer in 'debug.info.writer.pas',
-  debug.info.codeview in 'debug.info.codeview.pas',
-  debug.info.reader.test in 'debug.info.reader.test.pas',
+  debug.info.writer.pdb in 'debug.info.writer.pdb.pas',
+  debug.info.writer.yaml in 'debug.info.writer.yaml.pas',
   debug.info.reader in 'debug.info.reader.pas',
-  debug.info.pdb.bind in 'debug.info.pdb.bind.pas',
+  debug.info.reader.map in 'debug.info.reader.map.pas',
+  debug.info.reader.test in 'debug.info.reader.test.pas',
+  debug.info.reader.jdbg in 'debug.info.reader.jdbg.pas',
+  debug.info.codeview in 'debug.info.codeview.pas',
   debug.info.msf in 'debug.info.msf.pas',
+  debug.info.pdb in 'debug.info.pdb.pas',
+  debug.info.pdb.bind in 'debug.info.pdb.bind.pas',
   debug.info.log in 'debug.info.log.pas',
   debug.info.utilities in 'debug.info.utilities.pas';
 
@@ -62,7 +63,7 @@ end;
 procedure DisplayBanner;
 begin
   Writeln('map2pdb - Copyright (c) 2021 Anders Melander');
-  Writeln('Version 3.0.3');
+  Writeln('Version 3.1.0');
   Writeln;
 end;
 
@@ -91,7 +92,11 @@ begin
   Writeln('  -exclude:<nnnn>            Exclude the specified segment from the pdb');
   Writeln('                             (number must be a 4 digit decimal number)');
   Writeln('  -blocksize:<nnnn>          Set MSF block size');
-  Writeln('                             (default: 4096, valid values are 1024, 2048, 4096, 8192, etc.)');
+  Writeln('                             (default: 4096, valid values are 1024, 2048, 4096,');
+  Writeln('                             8192, etc.)');
+  Writeln('  -format:<source format>    Specify input file format: Map or Jdbg');
+  Writeln('                             By default auto detects from file type and falls');
+  Writeln('                             back to map format.');
   Writeln('  -pause                     Prompt after completion');
   Writeln;
   Writeln('Examples:');
@@ -149,8 +154,26 @@ end;
 type
   TTargetType = (ttPDB, ttYAML);
 const
-  sFileTypes: array[TTargetType] of string = ('.pdb', '.yaml');
+  sOutputFileTypes: array[TTargetType] of string = ('.pdb', '.yaml');
   WriterClasses: array[TTargetType] of TDebugInfoWriterClass = (TDebugInfoPdbWriter, TDebugInfoYamlWriter);
+
+type
+  TInputFormat = (ifMap, ifJdbg, ifTest);
+const
+  sInputFileTypes: array[TInputFormat] of string = ('.map', '.jdbg', '.test');
+  ReaderClasses: array[TInputFormat] of TDebugInfoReaderClass = (TDebugInfoMapReader, TDebugInfoJdbgReader, TDebugInfoSyntheticReader);
+
+function TryStrToInputFormat(const AName: string; var InputFormat: TInputFormat): boolean;
+begin
+  for var InFormat := Low(TInputFormat) to High(TInputFormat) do
+    if (SameText(AName, sInputFileTypes[InFormat])) then
+    begin
+      InputFormat := InFormat;
+      Exit(True);
+    end;
+  Result := False;
+end;
+
 begin
   var DoPause := FindCmdLineSwitch('pause');
   var sw := TStopwatch.StartNew;
@@ -179,8 +202,6 @@ begin
 
       exit;
     end;
-
-    var Test := FindCmdLineSwitch('t') or FindCmdLineSwitch('test');
 
     if FindCmdLineSwitch('debug') then
       SetDebugInfoLogLevel(lcDebug)
@@ -211,7 +232,7 @@ begin
 
     if (TargetFilename = '') then
     begin
-      TargetFilename := TPath.ChangeExtension(SourceFilename, sFileTypes[TargetType]);
+      TargetFilename := TPath.ChangeExtension(SourceFilename, sOutputFileTypes[TargetType]);
 
       Logger.Info('Output filename not specified. Defaulting to %s', [TPath.GetFileName(TargetFilename)]);
     end;
@@ -220,13 +241,28 @@ begin
     var DebugInfo := TDebugInfo.Create;
     try
 
+
+      (*
+      ** Determine source file format
+      *)
+      // Default to map format
+      var InputFormat: TInputFormat := ifMap;
+
+      var FileType: string;
+      // First try to get the format from the command line
+      if (not FindCmdLineSwitch('format', FileType, True, [clstValueAppended])) or
+        (not TryStrToInputFormat('.'+FileType, InputFormat)) then
+      begin
+        // Then try to get it from the file type
+        FileType := TPath.GetExtension(SourceFilename);
+        TryStrToInputFormat(FileType, InputFormat);
+      end;
+
+
       (*
       ** Read source file
       *)
-      var ReaderClass: TDebugInfoReaderClass := TDebugInfoMapReader;
-
-      if (Test) then
-        ReaderClass := TDebugInfoSyntheticReader;
+      var ReaderClass: TDebugInfoReaderClass := ReaderClasses[InputFormat];
 
       var Reader := ReaderClass.Create;
       try

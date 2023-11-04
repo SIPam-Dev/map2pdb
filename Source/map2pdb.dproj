@@ -1,7 +1,7 @@
 ﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{A25D649E-BB0F-4A61-B910-448B642CDDB3}</ProjectGuid>
-        <ProjectVersion>18.8</ProjectVersion>
+        <ProjectVersion>19.5</ProjectVersion>
         <FrameworkType>None</FrameworkType>
         <MainSource>map2pdb.dpr</MainSource>
         <Base>True</Base>
@@ -103,6 +103,7 @@
         <Debugger_RunParams>-v test.map -bind</Debugger_RunParams>
         <DCC_IntegerOverflowCheck>true</DCC_IntegerOverflowCheck>
         <DCC_RangeChecking>true</DCC_RangeChecking>
+        <DCC_UnitSearchPath>.\Externals\JEDI;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1_Win64)'!=''">
         <VerInfo_Locale>1033</VerInfo_Locale>
@@ -124,23 +125,25 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
-        <DCCReference Include="debug.info.reader.map.pas"/>
-        <DCCReference Include="debug.info.writer.yaml.pas"/>
         <DCCReference Include="debug.info.pas"/>
-        <DCCReference Include="debug.info.pdb.pas"/>
-        <DCCReference Include="debug.info.writer.pdb.pas"/>
         <DCCReference Include="debug.info.writer.pas"/>
-        <DCCReference Include="debug.info.codeview.pas"/>
-        <DCCReference Include="debug.info.reader.test.pas"/>
+        <DCCReference Include="debug.info.writer.pdb.pas"/>
+        <DCCReference Include="debug.info.writer.yaml.pas"/>
         <DCCReference Include="debug.info.reader.pas"/>
-        <DCCReference Include="debug.info.pdb.bind.pas"/>
+        <DCCReference Include="debug.info.reader.map.pas"/>
+        <DCCReference Include="debug.info.reader.test.pas"/>
+        <DCCReference Include="debug.info.reader.jdbg.pas"/>
+        <DCCReference Include="debug.info.codeview.pas"/>
         <DCCReference Include="debug.info.msf.pas"/>
+        <DCCReference Include="debug.info.pdb.pas"/>
+        <DCCReference Include="debug.info.pdb.bind.pas"/>
         <DCCReference Include="debug.info.log.pas"/>
         <DCCReference Include="debug.info.utilities.pas"/>
         <BuildConfiguration Include="Release">
             <Key>Cfg_2</Key>
             <CfgParent>Base</CfgParent>
         </BuildConfiguration>
+        <DCCReference Include="debug.info.reader.jdbg.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
