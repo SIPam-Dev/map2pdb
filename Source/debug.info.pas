@@ -118,6 +118,7 @@ type
 
     function Add(const AFilename: string): TDebugInfoSourceFile;
     function First: TDebugInfoSourceFile;
+    function Contains(SourceFile: TDebugInfoSourceFile): boolean; // Expensive!
 
     property Count: integer read GetCount;
 
@@ -779,6 +780,11 @@ begin
     Result := TDebugInfoSourceFile.Create(AFilename);
     FSourceFiles.Add(AFilename, Result);
   end;
+end;
+
+function TDebugInfoSourceFiles.Contains(SourceFile: TDebugInfoSourceFile): boolean;
+begin
+  Result := FSourceFiles.ContainsValue(SourceFile);
 end;
 
 constructor TDebugInfoSourceFiles.Create(AOwner: TDebugInfo);
