@@ -32,17 +32,82 @@ type
   private
     FLineLogger: IDebugInfoLineLogger;
   protected
-    function Demangle(Module: TDebugInfoModule; const Name: string): string;
     property LineLogger: IDebugInfoLineLogger read FLineLogger;
   public
     constructor Create; override;
     procedure LoadFromStream(Stream: TStream; DebugInfo: TDebugInfo); override;
   end;
 
+// More a beautyfier than a demangler since the MAP symbols aren't really mangled
+function DemangleMapSymbol(Module: TDebugInfoModule; const Name: string): string;
+
+
 implementation
 
 uses
   System.SysUtils;
+
+function DemangleMapSymbol(Module: TDebugInfoModule; const Name: string): string;
+begin
+  var n := 1;
+
+  // Strip module name from symbol name
+  if (Name.StartsWith(Module.Name)) and (Name.Length > Module.Name.Length) and (Name[Module.Name.Length+1] = '.') then
+    Inc(n, Module.Name.Length+1); // +1 to get rid of the separating "."
+
+//  if (Pos('$thunk_', Name, n) = n) then
+//    Inc(n, '$thunk_'.Length);
+
+  if (n < Name.Length) then
+  begin
+    // Types start with "."
+    if (n < Name.Length) and (Name[n] = '.') then
+      Exit('');
+
+    // Skip {module}
+    if (Name[n] = '{') then
+      n := Pos('}', Name, n+1)+1;
+
+    // Strip leading "@"
+    if (n < Name.Length) and (Name[n] = '@') then
+      Inc(n);
+  end;
+
+  if (n > 1) then
+    Result := Copy(Name, n, MaxInt)
+  else
+    Result := Name;
+
+  // Remove type unit scopes
+  //   TList<System.Generics.Collections.TPair<System.TypInfo.PTypeInfo,System.string>>.GetList
+  //   TList<TPair<PTypeInfo,string>>.GetList
+  n := Pos('<', Result);
+  while (n < Result.Length) and (n <> 0) do
+  begin
+
+    // Find next '<' or ','
+    while (n <= Result.Length) and (Result[n] <> '<') and (Result[n] <> ',') do
+      Inc(n);
+    Inc(n); // Skip it
+
+    if (n > Result.Length) then
+      break;
+
+    // Find last '.'
+    var n2 := n;
+    var LastDot := -1;
+    while (n2 <= Result.Length) and (Ord(Result[n2]) <= 255) and (AnsiChar(Result[n2]) in ['a'..'z', 'A'..'Z', '.']) do
+    begin
+      if (Result[n2] = '.') then
+        LastDot := n2;
+      inc(n2);
+    end;
+    if (LastDot <> -1) then
+      Delete(Result, n, LastDot-n+1);
+
+    inc(n);
+  end;
+end;
 
 type
   TDebugInfoLineModuleLogger = class(TInterfacedObject, IDebugInfoLineLogger)
@@ -182,70 +247,6 @@ constructor TDebugInfoMapReader.Create;
 begin
   inherited;
   FLineLogger := TDebugInfoLineModuleLogger.Create(Logger);
-end;
-
-function TDebugInfoMapReader.Demangle(Module: TDebugInfoModule; const Name: string): string;
-begin
-  // More a beautyfier than a demangler since the MAP symbols aren't really mangled
-
-  var n := 1;
-
-  // Strip module name from symbol name
-  if (Name.StartsWith(Module.Name)) and (Name.Length > Module.Name.Length) and (Name[Module.Name.Length+1] = '.') then
-    Inc(n, Module.Name.Length+1); // +1 to get rid of the separating "."
-
-//  if (Pos('$thunk_', Name, n) = n) then
-//    Inc(n, '$thunk_'.Length);
-
-  if (n < Name.Length) then
-  begin
-    // Types start with "."
-    if (n < Name.Length) and (Name[n] = '.') then
-      Exit('');
-
-    // Skip {module}
-    if (Name[n] = '{') then
-      n := Pos('}', Name, n+1)+1;
-
-    // Strip leading "@"
-    if (n < Name.Length) and (Name[n] = '@') then
-      Inc(n);
-  end;
-
-  if (n > 1) then
-    Result := Copy(Name, n, MaxInt)
-  else
-    Result := Name;
-
-  // Remove type unit scopes
-  //   TList<System.Generics.Collections.TPair<System.TypInfo.PTypeInfo,System.string>>.GetList
-  //   TList<TPair<PTypeInfo,string>>.GetList
-  n := Pos('<', Result);
-  while (n < Result.Length) and (n <> 0) do
-  begin
-
-    // Find next '<' or ','
-    while (n <= Result.Length) and (Result[n] <> '<') and (Result[n] <> ',') do
-      Inc(n);
-    Inc(n); // Skip it
-
-    if (n > Result.Length) then
-      break;
-
-    // Find last '.'
-    var n2 := n;
-    var LastDot := -1;
-    while (Ord(Result[n2]) <= 255) and (AnsiChar(Result[n2]) in ['a'..'z', 'A'..'Z', '.']) do
-    begin
-      if (Result[n2] = '.') then
-        LastDot := n2;
-      inc(n2);
-    end;
-    if (LastDot <> -1) then
-      Delete(Result, n, LastDot-n+1);
-
-    inc(n);
-  end;
 end;
 
 procedure TDebugInfoMapReader.LoadFromStream(Stream: TStream; DebugInfo: TDebugInfo);
@@ -503,7 +504,7 @@ begin
       if (Module <> nil) then
       begin
 
-        Name := Demangle(Module, Name);
+        Name := DemangleMapSymbol(Module, Name);
 
         if (Name <> '') then
         begin
