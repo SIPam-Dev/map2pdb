@@ -497,10 +497,10 @@ begin
       begin
         // This problem is so common that we're logging it at debug level instead of warning level
         var SymbolSize := Delta;
-        if (Symbol.Offset + Delta > Module.Size) then
+        if (Symbol.Offset + Cardinal(Delta) > Module.Size) then
         begin
           SymbolSize := Module.Size - Symbol.Offset;
-          Logger.Debug('[%6d] Symbol %s at %.8X (Size:%.4X) exceeds module %s at %.8X (Size:%.4X) for source file %s. Truncated to %.4X', [i, Name, Offset, Delta, Module.Name, Module.Offset, Module.Size, Name, SymbolSize]);
+          Logger.Debug('[%6d] Symbol %s at %.8X (Size:%.4X) exceeds module %s at %.8X (Size:%.4X). Truncated to %.4X', [i, Name, Offset, Delta, Module.Name, Module.Offset, Module.Size, SymbolSize]);
         end;
 
         // We assume that symbols are ordered by offset. Otherwise the size will be wrong.
