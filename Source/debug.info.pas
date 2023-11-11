@@ -227,6 +227,8 @@ type
     constructor Create(ADebugInfo: TDebugInfo; const AName: string; ASegment: TDebugInfoSegment; AOffset, ASize: TDebugInfoOffset);
     destructor Destroy; override;
 
+    procedure CalculateSize;
+
     property DebugInfo: TDebugInfo read FDebugInfo;
 
     property Name: string read FName;
@@ -293,6 +295,7 @@ implementation
 
 uses
   Winapi.Windows,
+  System.Math,
   System.SysUtils;
 
 { TDebugInfo }
@@ -352,6 +355,19 @@ begin
   Result := FObjectName;
   if (Result = '') then
     Result := FName;;
+end;
+
+procedure TDebugInfoModule.CalculateSize;
+begin
+  // Determine max size of module
+  var MaxModuleSize := FSize;
+  for var SourceLine in FSourceLines do
+    MaxModuleSize := Max(MaxModuleSize, SourceLine.Offset);
+
+  for var Symbol in FSymbols do
+    MaxModuleSize := Max(MaxModuleSize, Symbol.Offset + Symbol.Size);
+
+  FSize := MaxModuleSize;
 end;
 
 { TDebugInfoSymbols }

@@ -74,7 +74,9 @@ implementation
 
 uses
   Generics.Defaults,
-  System.SysUtils;
+  System.Math,
+  System.SysUtils,
+  debug.info.reader.map;
 
 
 // JCL binary debug format string encoding/decoding routines
@@ -280,7 +282,7 @@ begin
       if (Module <> nil) then
         Logger.Error('[%6d] Modules overlap: %s and %s', [i, Module.Name, Name]);
 
-      DebugInfo.Modules.Add(Name, Segment, Offset, Size)
+      DebugInfo.Modules.Add(Name, Segment, Offset, Size);
     end else
       Logger.Warning('[%6d] Empty module skipped: %s at %.8X', [i, Name, Offset]);
 
@@ -480,10 +482,14 @@ begin
     var Module := DebugInfo.Modules.FindByOffset(Segment, Offset);
     if (Module <> nil) then
     begin
+      Name := DemangleMapSymbol(Module, Name);
       Logger.Debug('  Symbol[%6d]: %.8X (%.4X) %s, Module: %s', [i, Offset, Delta, Name, Module.Name]);
+
       // Offset is relative to segment. Make it relative to module
       var RelativeOffset := Offset - Module.Offset;
       var Symbol := Module.Symbols.Add(Name, RelativeOffset);
+      if (Symbol = nil) then
+        Logger.Warning('[%6d] Symbol with duplicate offset ignored: [%.8X] %s', [i, Offset, Name]);
 
       // We assume that symbols are ordered by offset. Otherwise the size will be wrong.
       Symbol.Size := Delta;
@@ -513,6 +519,17 @@ begin
   finally
     FSourceFragments.Free;
   end;
+
+  // Determine max size of segment
+  var MaxSegmentSize := Segment.Size;
+  for var Module in DebugInfo.Modules do
+  begin
+    // Determine max size of module
+    Module.CalculateSize;
+
+    MaxSegmentSize := Max(MaxSegmentSize, Module.Offset + Module.Size);
+  end;
+  Segment.Size := MaxSegmentSize;
 end;
 
 
