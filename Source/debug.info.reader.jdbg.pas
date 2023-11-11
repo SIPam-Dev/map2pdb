@@ -275,7 +275,11 @@ begin
     DoContinue := ReadValue(Data, Size);
 
     Logger.Debug('  Module[%6d]: %.8X (Size:%.4X) %s', [i, Offset, Size, Name]);
-    if (Size <> 0) then
+
+    if (not DoContinue) and (Size = MaxInt) then
+      Logger.Warning('[%6d] Filler module skipped: %s at %.8X', [i, Name, Offset])
+    else
+    if (Size > 0) then
     begin
       // Look for existing module
       var Module := DebugInfo.Modules.FindOverlap(Segment, Offset, Size);
@@ -478,6 +482,7 @@ begin
 
     // Get the offset to the next symbol. This gives us the size of this one.
     DoContinue := ReadValue(Data, Delta);
+    Assert(Delta >= 0, 'Symbol with negative size');
 
     var Module := DebugInfo.Modules.FindByOffset(Segment, Offset);
     if (Module <> nil) then
@@ -488,11 +493,21 @@ begin
       // Offset is relative to segment. Make it relative to module
       var RelativeOffset := Offset - Module.Offset;
       var Symbol := Module.Symbols.Add(Name, RelativeOffset);
-      if (Symbol = nil) then
+      if (Symbol <> nil) then
+      begin
+        // This problem is so common that we're logging it at debug level instead of warning level
+        var SymbolSize := Delta;
+        if (Symbol.Offset + Delta > Module.Size) then
+        begin
+          SymbolSize := Module.Size - Symbol.Offset;
+          Logger.Debug('[%6d] Symbol %s at %.8X (Size:%.4X) exceeds module %s at %.8X (Size:%.4X) for source file %s. Truncated to %.4X', [i, Name, Offset, Delta, Module.Name, Module.Offset, Module.Size, Name, SymbolSize]);
+        end;
+
+        // We assume that symbols are ordered by offset. Otherwise the size will be wrong.
+        Symbol.Size := SymbolSize;
+      end else
         Logger.Warning('[%6d] Symbol with duplicate offset ignored: [%.8X] %s', [i, Offset, Name]);
 
-      // We assume that symbols are ordered by offset. Otherwise the size will be wrong.
-      Symbol.Size := Delta;
     end else
       Logger.Warning('[%6d] Failed to locate module for symbol %s at %.8X', [i, Name, Offset]);
   end;
