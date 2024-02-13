@@ -340,7 +340,7 @@ begin
     if (PEFilename <> '') or (FindCmdLineSwitch('bind')) then
     begin
       if (TargetType <> ttPDB) then
-        raise Exception.Create('-bind requires PDB output');
+        raise EDebugInfo.Create('-bind requires PDB output');
 
       if (PEFilename = '') then
       begin
@@ -353,23 +353,22 @@ begin
     end;
 
   except
-{$ifdef MADEXCEPT}
-    madExcept.HandleException;
-
-    if (DebugHook <> 0) then
-      DoPause := True;
-    ExitCode := 1;
-{$else MADEXCEPT}
     on E: Exception do
     begin
-      Writeln(E.ClassName, ': ', E.Message);
+{$ifdef MADEXCEPT}
+      // There's no need to scare the user with a madExcept stack trace for
+      // internally generated exceptions. Just show a simple error message.
+      if not (E is EDebugInfo) then
+        madExcept.HandleException
+      else
+{$endif MADEXCEPT}
+      Logger.Error('%s: %s', [E.ClassName, E.Message], False);
 
       if (DebugHook <> 0) then
         DoPause := True;
 
       ExitCode := 1;
     end;
-{$endif MADEXCEPT}
   end;
 
   DisplayElapsedTime(sw.ElapsedMilliseconds);

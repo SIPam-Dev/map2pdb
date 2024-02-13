@@ -61,7 +61,8 @@ implementation
 
 uses
   System.Generics.Collections,
-  System.SysUtils;
+  System.SysUtils,
+  Debug.Info; // EDebugInfo
 
 var
   FDebugInfoLogLevel: TDebugInfoLogCategory = lcError;
@@ -204,7 +205,7 @@ end;
 function GetDebugInfoLogModuleName(LogModule: TDebugInfoLogModule): string;
 begin
   if (FLogModules = nil) then
-    raise Exception.Create('Invalid log module handle');
+    raise EDebugInfo.CreateFmt('Invalid log module handle: %d', [LogModule]);
 
   Result := FLogModules[LogModule];
 end;

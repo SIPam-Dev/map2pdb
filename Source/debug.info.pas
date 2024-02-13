@@ -14,7 +14,8 @@ interface
 
 uses
   System.Generics.Collections,
-  System.Generics.Defaults;
+  System.Generics.Defaults,
+  System.SysUtils;
 
 type
   TDebugInfoOffset = UInt64;
@@ -52,6 +53,7 @@ type
     FSize: TDebugInfoOffset;
     FIndex: Cardinal;
     FCharacteristics: Cardinal;
+    FSegClassName: string;
   private
     procedure CheckOverlap;
   protected
@@ -70,6 +72,8 @@ type
     property Offset: TDebugInfoOffset read FOffset write SetOffset;
     property Size: TDebugInfoOffset read FSize write SetSize;
     property Characteristics: Cardinal read FCharacteristics write FCharacteristics; // TODO
+    // Class name as specified in map file. Might not correspond to SegClassType.
+    property SegClassName: string read FSegClassName write FSegClassName;
   end;
 
   TDebugInfoSegments = class
@@ -87,6 +91,7 @@ type
     function FindByIndex(AIndex: Cardinal): TDebugInfoSegment;
     function FindByName(const AName: string): TDebugInfoSegment;
     function FindByOffset(AOffset: TDebugInfoOffset): TDebugInfoSegment;
+    function FindByClassName(const AClassName: string): TDebugInfoSegment;
 
     property Count: integer read GetCount;
     property Segments[Index: Cardinal]: TDebugInfoSegment read GetSegment; default;
@@ -290,13 +295,15 @@ type
     property SourceFiles: TDebugInfoSourceFiles read FSourceFiles;
   end;
 
+type
+  EDebugInfo = class(Exception);
+
 
 implementation
 
 uses
   Winapi.Windows,
-  System.Math,
-  System.SysUtils;
+  System.Math;
 
 { TDebugInfo }
 
@@ -448,7 +455,7 @@ begin
 
     var Index: integer;
     if (FModules.BinarySearch(Result, Index, FComparer)) then
-      raise Exception.Create('Cannot add overlapping modules');
+      raise EDebugInfo.Create('Cannot add overlapping modules');
 
     FModules.Insert(Index, Result);
 
@@ -618,10 +625,10 @@ end;
 function TDebugInfoSegments.Add(AIndex: Cardinal; const AName: string; AClassType: TDebugInfoSegmentClass): TDebugInfoSegment;
 begin
   if (AIndex = 0) then
-    raise Exception.Create('Invalid Segment index');
+    raise EDebugInfo.CreateFmt('Invalid Segment index: %d', [AIndex]);
 
   if (FNames.ContainsKey(AName)) then
-    raise Exception.Create('Duplicate Segment name');
+    raise EDebugInfo.CreateFmt('Duplicate Segment name: %s', [AName]);
 
   // Index is 1-based
   var ListIndex := integer(AIndex-1);
@@ -629,7 +636,7 @@ begin
   if (ListIndex < FSegments.Count) then
   begin
     if (FSegments[ListIndex] <> nil) then
-      raise Exception.Create('Duplicate Segment index');
+      raise EDebugInfo.CreateFmt('Duplicate Segment index: %d', [AIndex]);
   end else
     FSegments.Count := ListIndex+1;
 
@@ -649,7 +656,7 @@ function TDebugInfoSegments.FindByIndex(AIndex: Cardinal): TDebugInfoSegment;
 begin
   // Index is 1-based
   if (AIndex <= 0) then
-    raise Exception.CreateFmt('Invalid Segment index: %d', [AIndex]);
+    raise EDebugInfo.CreateFmt('Invalid Segment index: %d', [AIndex]);
 
   if (integer(AIndex) <= FSegments.Count) then
     Result := FSegments[AIndex - 1]
@@ -672,13 +679,22 @@ begin
   Result := FindByIndex(AIndex);
 
   if (Result = nil) then
-    raise Exception.CreateFmt('Segment index does not exist: %d', [AIndex]);
+    raise EDebugInfo.CreateFmt('Segment index does not exist: %d', [AIndex]);
 end;
 
 function TDebugInfoSegments.FindByOffset(AOffset: TDebugInfoOffset): TDebugInfoSegment;
 begin
   for Result in FSegments do
     if (AOffset >= Result.Offset) and (AOffset < Result.Offset+Result.Size) then
+      Exit;
+
+  Result := nil;
+end;
+
+function TDebugInfoSegments.FindByClassName(const AClassName: string): TDebugInfoSegment;
+begin
+  for Result in FSegments do
+    if (SameText(AClassName, Result.SegClassName)) then
       Exit;
 
   Result := nil;
@@ -766,7 +782,7 @@ begin
   var OverlappingSegment := FindOverlap([sctTLS]);
 
   if (OverlappingSegment <> nil) then
-    raise Exception.CreateFmt('Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
+    raise EDebugInfo.CreateFmt('Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
       [Self.Name, Self.Index, Self.Offset, OverlappingSegment.Name, OverlappingSegment.Index, OverlappingSegment.Offset]);
 end;
 
