@@ -45,7 +45,8 @@ function DemangleMapSymbol(Module: TDebugInfoModule; const Name: string): string
 implementation
 
 uses
-  System.SysUtils;
+  System.SysUtils,
+  System.Math;
 
 function DemangleMapSymbol(Module: TDebugInfoModule; const Name: string): string;
 begin
@@ -359,6 +360,8 @@ begin
     if (Reader.NextLine(True).IsEmpty) then
       Exit;
 
+    var LegacyMapFile := False;
+
     // " 0001:00401000 000F47FCH .text                   CODE"
     while (not Reader.CurrentLine.IsEmpty) do
     begin
@@ -381,11 +384,41 @@ begin
       if (ClassName.IsEmpty) then
         LineLogger.Error(Reader.LineNumber, 'Invalid segment class name'#13#10'%s', [Reader.LineBuffer]);
 
+      // Try to detect ancient map files with invalid segment info
+//      LegacyMapFile := LegacyMapFile or ((SegmentID = 2) and (Offset = 0));
+
+      if (LegacyMapFile) then
+      begin
+        // Try to recover from invalid segment info
+        var ConflictingSegment := DebugInfo.Segments.FindByOffset(Offset);
+        if (ConflictingSegment <> nil) then
+        begin
+          LineLogger.Warning(Reader.LineNumber, 'Legacy map file. Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
+            [Name, SegmentID, Offset, ConflictingSegment.Name, ConflictingSegment.Index, ConflictingSegment.Offset]);
+          // Calculate a bogus offset so we can get on with it
+          for var Segment in DebugInfo.Segments do
+            Offset := Max(Offset, Segment.Offset + Segment.Size);
+          LineLogger.Warning(Reader.LineNumber, 'Dummy segment offset assigned: %s [%.4X:%.16X]', [Name, SegmentID, Offset]);
+        end;
+
+        ConflictingSegment := DebugInfo.Segments.FindByIndex(SegmentID);
+        if (ConflictingSegment <> nil) then
+        begin
+          LineLogger.Warning(Reader.LineNumber, 'Legacy map file. Duplicate segment index: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
+            [Name, SegmentID, Offset, ConflictingSegment.Name, ConflictingSegment.Index, ConflictingSegment.Offset]);
+          // Calculate a bogus index
+          for var Segment in DebugInfo.Segments do
+            SegmentID := Max(SegmentID, Segment.Index+1);
+          LineLogger.Warning(Reader.LineNumber, 'Dummy segment index assigned: %s [%.4X:%.16X]', [Name, SegmentID, Offset]);
+        end;
+      end;
+
       var SegmentClass := TDebugInfoSegment.GuessClassType(ClassName);
       var Segment := DebugInfo.Segments.Add(SegmentID, Name, SegmentClass);
 
       Segment.Offset := Offset;
       Segment.Size := Size;
+      Segment.SegClassName := ClassName;
 
       // We previously ignored empty segments. E.g.:
       //   "0005:00000000 00000000H .tls                    TLS"
@@ -427,6 +460,7 @@ begin
     while (not Reader.CurrentLine.IsEmpty) do
     begin
       var n := Pos(' C=', Reader.LineBuffer);
+      var ClassName := Copy(Reader.LineBuffer, n+2, Pos(' ', Reader.LineBuffer, n+2)-n-2);
       var Address := Copy(Reader.LineBuffer, 1, n-1);
 
       n := Pos('M=', Reader.LineBuffer);
@@ -445,9 +479,16 @@ begin
       if (Size = 0) then
         LineLogger.Error(Reader.LineNumber, 'Invalid module size'#13#10'%s', [Reader.LineBuffer]);
 
-      var Segment := DebugInfo.Segments.FindByIndex(SegmentID);
+      var Segment: TDebugInfoSegment := nil;
+      if (LegacyMapFile) then
+        // We can't trust the SegmentIDs in old map files. Use the class name instead
+        Segment := DebugInfo.Segments.FindByClassName(ClassName);
+
       if (Segment = nil) then
-        LineLogger.Error(Reader.LineNumber, 'Unknown segment index: %.4d'#13#10'%s', [SegmentID, Reader.LineBuffer]);
+        Segment := DebugInfo.Segments.FindByIndex(SegmentID);
+
+      if (Segment = nil) then
+        LineLogger.Error(Reader.LineNumber, 'Unknown segment: %.4d (%s)'#13#10'%s', [SegmentID, ClassName, Reader.LineBuffer]);
 
       // Look for existing module
       var Module := DebugInfo.Modules.FindOverlap(Segment, Offset, Size);
