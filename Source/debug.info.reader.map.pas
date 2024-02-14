@@ -385,7 +385,11 @@ begin
         LineLogger.Error(Reader.LineNumber, 'Invalid segment class name'#13#10'%s', [Reader.LineBuffer]);
 
       // Try to detect ancient map files with invalid segment info
-//      LegacyMapFile := LegacyMapFile or ((SegmentID = 2) and (Offset = 0));
+      if (not LegacyMapFile) and (SegmentID = 2) and (Offset = 0) then
+      begin
+        LegacyMapFile := True;
+        LineLogger.Warning(Reader.LineNumber, 'Legacy map file detected. An attempt will be made to handle invalid Segment and Module data.');
+      end;
 
       if (LegacyMapFile) then
       begin
@@ -393,23 +397,25 @@ begin
         var ConflictingSegment := DebugInfo.Segments.FindByOffset(Offset);
         if (ConflictingSegment <> nil) then
         begin
-          LineLogger.Warning(Reader.LineNumber, 'Legacy map file. Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
+          LineLogger.Warning(Reader.LineNumber, 'Overlapping segments: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
             [Name, SegmentID, Offset, ConflictingSegment.Name, ConflictingSegment.Index, ConflictingSegment.Offset]);
           // Calculate a bogus offset so we can get on with it
           for var Segment in DebugInfo.Segments do
             Offset := Max(Offset, Segment.Offset + Segment.Size);
-          LineLogger.Warning(Reader.LineNumber, 'Dummy segment offset assigned: %s [%.4X:%.16X]', [Name, SegmentID, Offset]);
+          // Align to $1000
+          Offset := (Offset + $0FFF) and (not $0FFF);
+          LineLogger.Warning(Reader.LineNumber, 'Calculated segment offset assigned: %s [%.4X:%.16X]', [Name, SegmentID, Offset]);
         end;
 
         ConflictingSegment := DebugInfo.Segments.FindByIndex(SegmentID);
         if (ConflictingSegment <> nil) then
         begin
-          LineLogger.Warning(Reader.LineNumber, 'Legacy map file. Duplicate segment index: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
+          LineLogger.Warning(Reader.LineNumber, 'Duplicate segment index: %s [%.4X:%.16X] and %s [%.4X:%.16X]',
             [Name, SegmentID, Offset, ConflictingSegment.Name, ConflictingSegment.Index, ConflictingSegment.Offset]);
           // Calculate a bogus index
           for var Segment in DebugInfo.Segments do
             SegmentID := Max(SegmentID, Segment.Index+1);
-          LineLogger.Warning(Reader.LineNumber, 'Dummy segment index assigned: %s [%.4X:%.16X]', [Name, SegmentID, Offset]);
+          LineLogger.Warning(Reader.LineNumber, 'Calculated segment index assigned: %s [%.4X:%.16X]', [Name, SegmentID, Offset]);
         end;
       end;
 
